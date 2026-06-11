@@ -128,83 +128,83 @@ class TestCommitter:
             ["git", "rev-parse", "HEAD"], capture=True
         ).strip()
 
-def _git_push(self, branch: str) -> None:
-    """Push the current branch, pulling+rebasing first if remote has new commits.
+    def _git_push(self, branch: str) -> None:
+        """Push the current branch, pulling+rebasing first if remote has new commits.
 
-    If the rebase produces conflicts, we abort cleanly and raise so the
-    operator can resolve them manually. We never force-push.
-    """
-    # 1. Make sure we know about the latest remote state
-    try:
-        self._run(["git", "fetch", "origin", branch])
-    except TestCommitterError:
-        # Branch doesn't exist on origin yet — first push, nothing to rebase
-        logger.info(
-            "remote branch not found — first push for this branch",
-            extra={"branch": branch},
-        )
-        self._run(["git", "push", "origin", f"HEAD:{branch}"])
-        return
-
-    # 2. Check whether the remote has commits we don't
-    try:
-        local_only = self._run(
-            ["git", "rev-list", f"origin/{branch}..HEAD", "--count"],
-            capture=True,
-        ).strip()
-        remote_only = self._run(
-            ["git", "rev-list", f"HEAD..origin/{branch}", "--count"],
-            capture=True,
-        ).strip()
-    except TestCommitterError as exc:
-        logger.warning(
-            "could not compare with remote — attempting plain push",
-            extra={"error": str(exc)},
-        )
-        self._run(["git", "push", "origin", f"HEAD:{branch}"])
-        return
-
-    logger.info(
-        "branch divergence check",
-        extra={
-            "branch": branch,
-            "local_only_commits": local_only,
-            "remote_only_commits": remote_only,
-        },
-    )
-
-    if remote_only != "0":
-        # Remote has commits we don't have — rebase before pushing
-        logger.info(
-            f"remote has {remote_only} commit(s) we don't — rebasing",
-            extra={"branch": branch},
-        )
+        If the rebase produces conflicts, we abort cleanly and raise so the
+        operator can resolve them manually. We never force-push.
+        """
+        # 1. Make sure we know about the latest remote state
         try:
-            self._run(["git", "rebase", f"origin/{branch}"])
-        except TestCommitterError as exc:
-            # Rebase failed — almost certainly conflicts. Abort cleanly.
-            logger.error(
-                "rebase produced conflicts — aborting and skipping push. "
-                "Pull manually, resolve conflicts, and re-run the bot.",
+            self._run(["git", "fetch", "origin", branch])
+        except TestCommitterError:
+            # Branch doesn't exist on origin yet — first push, nothing to rebase
+            logger.info(
+                "remote branch not found — first push for this branch",
                 extra={"branch": branch},
             )
-            # Try to leave the working tree in a clean state
-            try:
-                self._run(["git", "rebase", "--abort"])
-            except TestCommitterError:
-                logger.warning(
-                    "git rebase --abort also failed — your working tree "
-                    "may be in a partial rebase state. Run "
-                    "`git rebase --abort` manually."
-                )
-            raise TestCommitterError(
-                f"merge conflicts while rebasing on origin/{branch}. "
-                f"Resolve manually with `git pull --rebase` and re-run. "
-                f"Underlying error: {exc}"
-            ) from exc
+            self._run(["git", "push", "origin", f"HEAD:{branch}"])
+            return
 
-    # 3. Now safe to push
-    self._run(["git", "push", "origin", f"HEAD:{branch}"])
+        # 2. Check whether the remote has commits we don't
+        try:
+            local_only = self._run(
+                ["git", "rev-list", f"origin/{branch}..HEAD", "--count"],
+                capture=True,
+            ).strip()
+            remote_only = self._run(
+                ["git", "rev-list", f"HEAD..origin/{branch}", "--count"],
+                capture=True,
+            ).strip()
+        except TestCommitterError as exc:
+            logger.warning(
+                "could not compare with remote — attempting plain push",
+                extra={"error": str(exc)},
+            )
+            self._run(["git", "push", "origin", f"HEAD:{branch}"])
+            return
+
+        logger.info(
+            "branch divergence check",
+            extra={
+                "branch": branch,
+                "local_only_commits": local_only,
+                "remote_only_commits": remote_only,
+            },
+        )
+
+        if remote_only != "0":
+            # Remote has commits we don't have — rebase before pushing
+            logger.info(
+                f"remote has {remote_only} commit(s) we don't — rebasing",
+                extra={"branch": branch},
+            )
+            try:
+                self._run(["git", "rebase", f"origin/{branch}"])
+            except TestCommitterError as exc:
+                # Rebase failed — almost certainly conflicts. Abort cleanly.
+                logger.error(
+                    "rebase produced conflicts — aborting and skipping push. "
+                    "Pull manually, resolve conflicts, and re-run the bot.",
+                    extra={"branch": branch},
+                )
+                # Try to leave the working tree in a clean state
+                try:
+                    self._run(["git", "rebase", "--abort"])
+                except TestCommitterError:
+                    logger.warning(
+                        "git rebase --abort also failed — your working tree "
+                        "may be in a partial rebase state. Run "
+                        "`git rebase --abort` manually."
+                    )
+                raise TestCommitterError(
+                    f"merge conflicts while rebasing on origin/{branch}. "
+                    f"Resolve manually with `git pull --rebase` and re-run. "
+                    f"Underlying error: {exc}"
+                ) from exc
+
+        # 3. Now safe to push
+        self._run(["git", "push", "origin", f"HEAD:{branch}"])
 
     def _open_pr_via_gh(self, pr_info: PRInfo) -> str | None:
         if not shutil.which("gh"):
