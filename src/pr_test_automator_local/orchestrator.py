@@ -8,6 +8,7 @@ from pr_test_automator_local._logging import get_logger
 from pr_test_automator_local.config import LocalTestConfig
 from pr_test_automator_local.llm_bridge import ClaudeCodeBridge, LLMBridge
 from pr_test_automator_local.models import (
+    AffectedFunction,
     GeneratedTest,
     PipelineResult,
     StepOutcome,
@@ -105,6 +106,33 @@ class LocalTestPipeline:
                 pr_info.base_branch, pr_info.head_branch,
             )
 
+        # v0.3.0a6: apply --file whitelist (if set) FIRST. When the user
+        # names specific files, that trumps all other filtering.
+        affected = self._apply_file_whitelist(affected)
+        if not affected:
+            logger.info(
+                "no functions remain after --file whitelist — done"
+            )
+            return self._build_result(
+                steps, tests, test_result, commit_sha, pr_url, files_changed,
+                pr_info.base_branch, pr_info.head_branch,
+            )
+
+        # v0.3.0a5: apply --java-file-filter to skip categories that
+        # aren't worth generating tests for (e.g. controllers/daos when
+        # the user just wants services). This runs AFTER the analyzer
+        # so the diff summary remains complete and honest, but BEFORE
+        # test generation so we don't waste LLM calls.
+        affected = self._apply_java_file_filter(affected)
+        if not affected:
+            logger.info(
+                "no functions remain after --java-file-filter — done"
+            )
+            return self._build_result(
+                steps, tests, test_result, commit_sha, pr_url, files_changed,
+                pr_info.base_branch, pr_info.head_branch,
+            )
+
         existing_tests, step3 = self._step(
             "test_finder", lambda: self._finder.find(affected)
         )
@@ -173,6 +201,104 @@ class LocalTestPipeline:
         except LocalTestAutomatorError as exc:
             logger.error(f"step {name} failed: {exc}")
             return None, StepOutcome(step=name, success=False, message=str(exc))
+
+    def _apply_file_whitelist(
+        self, affected: list[AffectedFunction]
+    ) -> list[AffectedFunction]:
+        """When --file is passed one or more times, drop everything else.
+
+        Path comparison normalizes both sides so ``./src/main/java/Foo.java``,
+        ``src/main/java/Foo.java``, and ``src\\main\\java\\Foo.java`` all
+        match. Anything outside the whitelist is dropped with a summary
+        log line so the user knows what got skipped.
+        """
+        whitelist = getattr(self._config, "file_whitelist", None)
+        if not whitelist:
+            return affected
+
+        normalized_whitelist = {
+            self._normalize_path(p) for p in whitelist
+        }
+
+        kept: list[AffectedFunction] = []
+        skipped: list[str] = []
+        for fn in affected:
+            if self._normalize_path(fn.file_path) in normalized_whitelist:
+                kept.append(fn)
+            else:
+                if fn.file_path not in skipped:
+                    skipped.append(fn.file_path)
+
+        if skipped:
+            logger.info(
+                "file whitelist dropped %d file(s) not in --file list. "
+                "Kept: %s. Skipped: %s",
+                len(skipped),
+                ", ".join(whitelist),
+                ", ".join(skipped[:10]) + (
+                    f" ... and {len(skipped) - 10} more"
+                    if len(skipped) > 10 else ""
+                ),
+            )
+        return kept
+
+    @staticmethod
+    def _normalize_path(p: str) -> str:
+        """Normalize a path for whitelist comparison. Handles ``./``
+        prefix, backslash separators, and trailing slashes.
+        """
+        p = p.replace("\\", "/")
+        if p.startswith("./"):
+            p = p[2:]
+        return p.rstrip("/")
+
+    def _apply_java_file_filter(
+        self, affected: list[AffectedFunction]
+    ) -> list[AffectedFunction]:
+        """Filter affected functions by Java file category.
+
+        The filter is Java-specific. Python/Kotlin functions pass
+        through unchanged. Java files matching a category the user
+        did NOT request are dropped, and a summary log line records
+        what was skipped so the user knows why their diff didn't
+        produce as many tests as expected.
+
+        Returns the filtered list. If no filter is configured, returns
+        the input list unchanged.
+        """
+        file_filter = getattr(self._config, "java_file_filter", None)
+        if not file_filter:
+            return affected
+
+        from pr_test_automator_local.languages.java.file_filter import (
+            classify_java_file, should_process_java_file,
+        )
+
+        kept: list[AffectedFunction] = []
+        # Track why each file was dropped, for the summary log
+        skipped: dict[str, str] = {}
+        for fn in affected:
+            if not fn.file_path.endswith(".java"):
+                # Non-Java files always pass through
+                kept.append(fn)
+                continue
+            if should_process_java_file(fn.file_path, file_filter):
+                kept.append(fn)
+            else:
+                category = classify_java_file(fn.file_path) or "unknown"
+                skipped[fn.file_path] = category
+
+        if skipped:
+            logger.info(
+                "java file filter dropped %d file(s) not matching "
+                "categories %s. Skipped: %s",
+                len(skipped),
+                ", ".join(file_filter),
+                ", ".join(
+                    f"{path} ({cat})" for path, cat in skipped.items()
+                ),
+            )
+        return kept
 
     def _build_result(
         self,

@@ -102,13 +102,26 @@ class CodeAnalyzer:
         # Enrich each AffectedFunction with the file's class signatures.
         # This is the v0.2.0a6.post4 fix for the "Claude hallucinates
         # constructor parameters" problem. The handler may expose an
-        # ``extract_class_signatures`` method (Kotlin does); if so, we
+        # ``extract_class_signatures`` method (Kotlin, Java do); if so, we
         # use it. Python's handler currently doesn't, so this is a no-op
         # for Python files (class_context stays empty).
+        #
+        # v0.3.0a6 addition: some handlers (Java) can also resolve
+        # project-internal imports and include their signatures. When
+        # available, pass source_file_path and repo_root so the handler
+        # can look up imports on disk.
         extract_signatures = getattr(handler, "extract_class_signatures", None)
         if extract_signatures is not None:
             try:
-                class_context = extract_signatures(source)
+                import inspect
+                sig = inspect.signature(extract_signatures)
+                # Pass extra kwargs if the handler declares them
+                kwargs: dict[str, str] = {}
+                if "source_file_path" in sig.parameters:
+                    kwargs["source_file_path"] = pr_file.filename
+                if "repo_root" in sig.parameters:
+                    kwargs["repo_root"] = self._config.repo_path
+                class_context = extract_signatures(source, **kwargs)
             except Exception:
                 # Defensive: never block the pipeline on signature
                 # extraction. If parsing fails, leave context empty —

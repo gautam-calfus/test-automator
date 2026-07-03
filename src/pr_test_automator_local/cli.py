@@ -113,6 +113,32 @@ def _build_parser() -> argparse.ArgumentParser:
             "cold starts or huge test suites."
         ),
     )
+    p.add_argument(
+        "--java-file-filter",
+        default=None,
+        help=(
+            "Comma-separated categories of Java files to generate tests "
+            "for. Others are analyzed but skipped at the test-generation "
+            "step (saves LLM quota). Values: 'services', 'controllers', "
+            "'daos', 'handlers', 'all'. Multiple values: "
+            "--java-file-filter services,controllers. When unset (default), "
+            "all Java files eligible for tests are processed."
+        ),
+    )
+    p.add_argument(
+        "--file",
+        default=None,
+        action="append",
+        help=(
+            "Process ONLY the specified file (path relative to repo "
+            "root). Repeat --file to include multiple specific files. "
+            "Bypasses --java-file-filter (if you name a file, we assume "
+            "you want it tested). Useful for iterating on a single "
+            "failing test file without spending quota on unchanged "
+            "neighbors. Example: --file "
+            "src/main/java/com/acme/service/CMService.java"
+        ),
+    )
     return p
 
 
@@ -163,6 +189,28 @@ def main(argv: list[str] | None = None) -> int:
         d.strip() for d in args.test_dirs.split(",") if d.strip()
     ] or ["tests"]
 
+    # Parse and validate --java-file-filter
+    java_file_filter: list[str] | None = None
+    if args.java_file_filter:
+        VALID = {"services", "controllers", "daos", "handlers", "all"}
+        raw = [
+            v.strip().lower()
+            for v in args.java_file_filter.split(",")
+            if v.strip()
+        ]
+        invalid = [v for v in raw if v not in VALID]
+        if invalid:
+            print(
+                f"error: --java-file-filter got unknown value(s): "
+                f"{', '.join(invalid)}. Valid: {', '.join(sorted(VALID))}"
+            )
+            return 2
+        # 'all' means no filter — treat as None
+        if "all" in raw or not raw:
+            java_file_filter = None
+        else:
+            java_file_filter = raw
+
     config = LocalTestConfig(
         repo_path=repo_path,
         base_branch=args.base_branch,
@@ -176,6 +224,8 @@ def main(argv: list[str] | None = None) -> int:
         claude_code_cmd=args.claude_code_cmd,
         claude_code_timeout=args.claude_code_timeout,
         test_runner_timeout=args.test_runner_timeout,
+        java_file_filter=java_file_filter,
+        file_whitelist=(args.file if args.file else None),
     )
 
     print(f"Running pr-test-automator-local in {repo_path}")

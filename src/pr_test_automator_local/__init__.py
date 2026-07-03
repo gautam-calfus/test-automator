@@ -48,7 +48,7 @@ from pr_test_automator_local.models import (
 )
 from pr_test_automator_local.orchestrator import LocalTestPipeline
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "__version__",

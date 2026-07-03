@@ -522,7 +522,11 @@ def test_diff_reader_includes_kotlin_files(tmp_path) -> None:
     assert not reader._is_eligible_source("src/test_foo.py")
     # Unknown extensions still excluded
     assert not reader._is_eligible_source("README.md")
-    # Java is NOT registered anymore (Java skeleton dropped)
-    assert not reader._is_eligible_source(
+    # Java is NOW registered (v0.3.0a1 added Java support)
+    assert reader._is_eligible_source(
         "src/main/java/com/foo/Bar.java"
+    )
+    # Java test files still excluded (under src/test/java)
+    assert not reader._is_eligible_source(
+        "src/test/java/com/foo/BarTest.java"
     )

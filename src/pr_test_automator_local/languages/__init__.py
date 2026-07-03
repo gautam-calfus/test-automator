@@ -15,6 +15,7 @@ Public API:
 """
 
 from pr_test_automator_local.languages.base import LanguageHandler
+from pr_test_automator_local.languages.java import JavaLanguageHandler
 from pr_test_automator_local.languages.kotlin import KotlinLanguageHandler
 from pr_test_automator_local.languages.python import PythonLanguageHandler
 from pr_test_automator_local.languages.registry import (
@@ -29,11 +30,13 @@ from pr_test_automator_local.languages.registry import (
 # Register the built-in handlers so they're available out of the box.
 register_language(PythonLanguageHandler())
 register_language(KotlinLanguageHandler())
+register_language(JavaLanguageHandler())
 
 __all__ = [
     "LanguageHandler",
     "PythonLanguageHandler",
     "KotlinLanguageHandler",
+    "JavaLanguageHandler",
     "register_language",
     "unregister_language",
     "get_handler_by_name",

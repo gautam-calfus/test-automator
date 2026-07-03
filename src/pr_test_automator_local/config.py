@@ -63,6 +63,16 @@ class LocalTestConfig:
     bot_name: str = DEFAULT_BOT_NAME
     bot_email: str = DEFAULT_BOT_EMAIL
     languages: list[str] | None = None
+    java_file_filter: list[str] | None = None
+    """Java-specific file categories to generate tests for. None means
+    all Java files. Valid values: 'services', 'controllers', 'daos',
+    'handlers'. Set via --java-file-filter CLI flag.
+    """
+    file_whitelist: list[str] | None = None
+    """If set, ONLY process files in this list (repo-relative paths).
+    All other files are dropped. Set via --file CLI flag (repeatable).
+    Overrides java_file_filter.
+    """
 
     @property
     def all_test_dirs(self) -> list[str]:

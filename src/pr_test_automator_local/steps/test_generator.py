@@ -75,6 +75,7 @@ class TestGenerator:
         by_file = self._group_by_file(affected)
         existing_by_source = {t.source_file_path: t for t in existing_tests}
         results: list[GeneratedTest] = []
+        failed_files: list[tuple[str, str]] = []
 
         for source_path, functions in by_file.items():
             handler = get_handler_for_file(source_path)
@@ -91,21 +92,59 @@ class TestGenerator:
                 configure(self._config.all_test_dirs)
 
             existing = existing_by_source.get(source_path)
-            if existing:
-                generated = self._generate_incremental(
-                    handler, source_path, functions, existing
+
+            # v0.3.0: per-file LLM failures are non-fatal. If Claude Code
+            # hits its session quota mid-batch (or any other transient
+            # error occurs), we log the file that failed and continue
+            # with the remaining files. Otherwise a single failure late
+            # in a large batch loses ALL work — up to 40+ minutes of
+            # quota-consuming generation calls.
+            try:
+                if existing:
+                    generated = self._generate_incremental(
+                        handler, source_path, functions, existing
+                    )
+                    mode = "incremental"
+                else:
+                    generated = self._generate_fresh(
+                        handler, source_path, functions
+                    )
+                    mode = "fresh"
+            except TestGeneratorError as exc:
+                logger.warning(
+                    "test generation FAILED for %s — continuing with "
+                    "remaining files. Error: %s",
+                    source_path, exc,
                 )
-                mode = "incremental"
-            else:
-                generated = self._generate_fresh(
-                    handler, source_path, functions
-                )
-                mode = "fresh"
+                failed_files.append((source_path, str(exc)))
+                continue
+
             results.append(generated)
             logger.info(
                 "generated tests",
                 extra={"source": source_path, "mode": mode},
             )
+
+        if failed_files:
+            logger.warning(
+                "test generation completed with %d failure(s) out of %d "
+                "files. Successful: %d. Failed files: %s",
+                len(failed_files),
+                len(by_file),
+                len(results),
+                ", ".join(path for path, _ in failed_files),
+            )
+
+        # Only raise if EVERYTHING failed (no results at all). Partial
+        # success is worth preserving — the successful files will be
+        # written to disk by the test_committer.
+        if not results and failed_files:
+            first_error = failed_files[0][1]
+            raise TestGeneratorError(
+                f"All {len(failed_files)} file(s) failed test generation. "
+                f"First error: {first_error}"
+            )
+
         return results
 
     def _generate_fresh(
