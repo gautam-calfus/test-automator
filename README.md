@@ -32,9 +32,14 @@ Same pipeline as the GitHub Actions version, but it runs from your terminal, rea
 ## Install
 
 ```bash
-git clone https://github.com/your-org/pr-test-automator-local.git
-cd pr-test-automator-local
+git clone https://github.com/gautam-calfus/test-automator.git
+cd test-automator
 pip install -e .
+```
+
+Or install a tagged release directly:
+```bash
+pip install "git+https://github.com/gautam-calfus/test-automator.git@v0.3.0"
 ```
 
 Verify:
