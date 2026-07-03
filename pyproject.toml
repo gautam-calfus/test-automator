@@ -1,5 +1,5 @@
 [project]
-name = "pr-test-automator-local"
+name = "test-automator"
 version = "0.3.0"
 description = "Generate tests locally using Claude Code (no Anthropic API key required). Supports Python (pytest) and Kotlin (JUnit 5 + MockK + Strikt; in alpha)."
 readme = "README.md"
@@ -38,7 +38,7 @@ dev = [
 ]
 
 [project.scripts]
-pr-test-automator-local = "pr_test_automator_local.cli:main"
+test-automator = "test_automator.cli:main"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

@@ -6,9 +6,9 @@ the full diff processed. Trumps --java-file-filter.
 
 from __future__ import annotations
 
-from pr_test_automator_local.config import LocalTestConfig
-from pr_test_automator_local.models import AffectedFunction
-from pr_test_automator_local.orchestrator import LocalTestPipeline
+from test_automator.config import LocalTestConfig
+from test_automator.models import AffectedFunction
+from test_automator.orchestrator import LocalTestPipeline
 
 
 def _fn(path: str) -> AffectedFunction:

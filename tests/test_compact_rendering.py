@@ -8,13 +8,13 @@ signature + diff hunk when the change is small relative to the function.
 
 from __future__ import annotations
 
-from pr_test_automator_local.languages.kotlin.prompts import (
+from test_automator.languages.kotlin.prompts import (
     _extract_function_signature,
     _render_functions_for_prompt,
     _render_one_function,
     user_prompt_fresh,
 )
-from pr_test_automator_local.models import AffectedFunction
+from test_automator.models import AffectedFunction
 
 
 # A realistic builder-chain function (similar to your EntityMappers but

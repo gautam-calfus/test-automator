@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from pr_test_automator_local.languages import (
+from test_automator.languages import (
     PythonLanguageHandler,
     all_languages,
     all_source_extensions,
@@ -17,7 +17,7 @@ from pr_test_automator_local.languages import (
     register_language,
     unregister_language,
 )
-from pr_test_automator_local.languages.base import LanguageHandler
+from test_automator.languages.base import LanguageHandler
 
 
 # ---------------------------------------------------------------------------
@@ -205,8 +205,8 @@ def test_diff_reader_skips_non_python_extensions(tmp_path) -> None:
     test_diff_reader_now_includes_java_files in test_java.py. This test
     only checks that totally-unknown extensions are still excluded.
     """
-    from pr_test_automator_local.config import LocalTestConfig
-    from pr_test_automator_local.steps.local_diff_reader import (
+    from test_automator.config import LocalTestConfig
+    from test_automator.steps.local_diff_reader import (
         LocalDiffReader,
     )
 

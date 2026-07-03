@@ -19,7 +19,7 @@ import textwrap
 
 import pytest
 
-from pr_test_automator_local.languages.java.import_resolver import (
+from test_automator.languages.java.import_resolver import (
     resolve_imports,
 )
 

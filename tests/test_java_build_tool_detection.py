@@ -21,7 +21,7 @@ import os
 
 import pytest
 
-from pr_test_automator_local.languages.java.runner import (
+from test_automator.languages.java.runner import (
     BuildToolDetection,
     detect_build_tool,
 )

@@ -26,11 +26,11 @@ import textwrap
 
 import pytest
 
-from pr_test_automator_local.languages.java.import_resolver import (
+from test_automator.languages.java.import_resolver import (
     resolve_imports,
     verify_test_imports,
 )
-from pr_test_automator_local.languages.java.repo_index import (
+from test_automator.languages.java.repo_index import (
     build_repo_index,
     clear_repo_index_cache,
     get_repo_index,

@@ -18,8 +18,8 @@ import subprocess
 
 import pytest
 
-from pr_test_automator_local.config import LocalTestConfig
-from pr_test_automator_local.steps.local_diff_reader import LocalDiffReader
+from test_automator.config import LocalTestConfig
+from test_automator.steps.local_diff_reader import LocalDiffReader
 
 
 @pytest.fixture
@@ -31,7 +31,7 @@ def captured_logs():
     stream = io.StringIO()
     handler = logging.StreamHandler(stream)
     handler.setLevel(logging.WARNING)
-    bot_logger = logging.getLogger("pr_test_automator_local")
+    bot_logger = logging.getLogger("test_automator")
     bot_logger.addHandler(handler)
     yield stream
     bot_logger.removeHandler(handler)
@@ -127,7 +127,7 @@ def test_no_files_message_mentions_source_root_case() -> None:
     and uncommitted changes — not say 'no Python source files' (which
     is misleading on Kotlin projects).
     """
-    import pr_test_automator_local.orchestrator as orch_module
+    import test_automator.orchestrator as orch_module
     import inspect
 
     src = inspect.getsource(orch_module)

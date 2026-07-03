@@ -17,8 +17,8 @@ from __future__ import annotations
 import os
 import textwrap
 
-from pr_test_automator_local.languages.java import runner
-from pr_test_automator_local.languages.java.handler import JavaLanguageHandler
+from test_automator.languages.java import runner
+from test_automator.languages.java.handler import JavaLanguageHandler
 
 
 _PASSING_XML = """\

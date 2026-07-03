@@ -19,8 +19,8 @@ import tempfile
 
 import pytest
 
-from pr_test_automator_local.languages.java import JavaLanguageHandler
-from pr_test_automator_local.languages.java import analyzer, extractor, runner
+from test_automator.languages.java import JavaLanguageHandler
+from test_automator.languages.java import analyzer, extractor, runner
 
 
 # ---------------------------------------------------------------------------

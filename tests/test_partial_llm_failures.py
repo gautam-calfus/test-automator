@@ -13,9 +13,9 @@ from unittest.mock import Mock, MagicMock
 
 import pytest
 
-from pr_test_automator_local.models import AffectedFunction, GeneratedTest
-from pr_test_automator_local.steps.test_generator import TestGenerator
-from pr_test_automator_local.utils.exceptions import TestGeneratorError
+from test_automator.models import AffectedFunction, GeneratedTest
+from test_automator.steps.test_generator import TestGenerator
+from test_automator.utils.exceptions import TestGeneratorError
 
 
 def _make_affected(source_path: str) -> AffectedFunction:
@@ -37,7 +37,7 @@ def test_partial_llm_failure_preserves_successes(monkeypatch):
     """When one file's LLM call fails mid-batch, the successes from
     earlier files must be preserved and returned.
     """
-    from pr_test_automator_local.config import LocalTestConfig
+    from test_automator.config import LocalTestConfig
 
     config = LocalTestConfig(
         repo_path="/tmp", base_branch="main", source_root="src/main/java",
@@ -67,7 +67,7 @@ def test_partial_llm_failure_preserves_successes(monkeypatch):
 
     # Patch get_handler_for_file to return our stub
     monkeypatch.setattr(
-        "pr_test_automator_local.steps.test_generator.get_handler_for_file",
+        "test_automator.steps.test_generator.get_handler_for_file",
         lambda _: handler,
     )
 
@@ -99,7 +99,7 @@ def test_partial_llm_failure_preserves_successes(monkeypatch):
 
 def test_all_llm_failures_still_raise(monkeypatch):
     """If EVERY file's LLM call fails, we do raise — there's nothing to save."""
-    from pr_test_automator_local.config import LocalTestConfig
+    from test_automator.config import LocalTestConfig
 
     config = LocalTestConfig(
         repo_path="/tmp", base_branch="main", source_root="src/main/java",
@@ -115,7 +115,7 @@ def test_all_llm_failures_still_raise(monkeypatch):
     handler.user_prompt_fresh.return_value = "user"
 
     monkeypatch.setattr(
-        "pr_test_automator_local.steps.test_generator.get_handler_for_file",
+        "test_automator.steps.test_generator.get_handler_for_file",
         lambda _: handler,
     )
 

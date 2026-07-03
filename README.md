@@ -1,4 +1,4 @@
-# pr-test-automator-local
+# test-automator
 
 Generate pytest tests for changed Python functions on your **local machine**, using **Claude Code** instead of the Anthropic API directly.
 
@@ -44,7 +44,7 @@ pip install "git+https://github.com/gautam-calfus/test-automator.git@v0.3.0"
 
 Verify:
 ```bash
-pr-test-automator-local --help
+test-automator --help
 ```
 
 ## Quick start
@@ -53,7 +53,7 @@ In any Python project that has at least one committed change since `main`:
 
 ```bash
 cd your-project/
-pr-test-automator-local --base-branch main --source-root src
+test-automator --base-branch main --source-root src
 ```
 
 This:
@@ -70,7 +70,7 @@ Tests are written to the configured test dir but **not committed** by default. Y
 ## Generate, commit, push, and open a PR in one command
 
 ```bash
-pr-test-automator-local \
+test-automator \
   --base-branch main \
   --source-root src \
   --open-pr
@@ -79,7 +79,7 @@ pr-test-automator-local \
 `--open-pr` implies `--push` which implies `--commit-tests`. So:
 
 1. Tests generated and run as above
-2. Tests committed with author `pr-test-automator[bot]`
+2. Tests committed with author `test-automator[bot]`
 3. Commit pushed to your current branch's remote
 4. PR opened via `gh pr create`
 
@@ -167,7 +167,7 @@ Either `gh` isn't installed, you're not authenticated (`gh auth login`), or a PR
 If you want to call this from your own Python code instead of via CLI:
 
 ```python
-from pr_test_automator_local import LocalTestConfig, LocalTestPipeline
+from test_automator import LocalTestConfig, LocalTestPipeline
 
 config = LocalTestConfig(
     repo_path="/path/to/your/repo",

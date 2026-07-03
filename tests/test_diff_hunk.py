@@ -9,9 +9,9 @@ a focused diff hunk so Claude focuses tests on the actual change.
 
 from __future__ import annotations
 
-from pr_test_automator_local.languages.kotlin import prompts
-from pr_test_automator_local.models import AffectedFunction
-from pr_test_automator_local.utils.diff_parser import (
+from test_automator.languages.kotlin import prompts
+from test_automator.models import AffectedFunction
+from test_automator.utils.diff_parser import (
     extract_diff_hunk_for_range,
 )
 

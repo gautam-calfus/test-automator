@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from pr_test_automator_local import LocalTestConfig, LocalTestPipeline
+from test_automator import LocalTestConfig, LocalTestPipeline
 
 
 def main() -> None:

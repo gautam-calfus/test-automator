@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from pr_test_automator_local.languages.kotlin import prompts
-from pr_test_automator_local.languages.kotlin.handler import (
+from test_automator.languages.kotlin import prompts
+from test_automator.languages.kotlin.handler import (
     KotlinLanguageHandler,
 )
-from pr_test_automator_local.models import AffectedFunction
+from test_automator.models import AffectedFunction
 
 
 # ---------------------------------------------------------------------------

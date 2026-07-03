@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from pr_test_automator_local.languages.java.file_filter import (
+from test_automator.languages.java.file_filter import (
     KNOWN_CATEGORIES,
     classify_java_file,
     should_process_java_file,

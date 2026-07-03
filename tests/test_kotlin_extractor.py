@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from pr_test_automator_local.languages.kotlin.extractor import (
+from test_automator.languages.kotlin.extractor import (
     ExtractionError,
     extract_kotlin_file,
     extract_kotlin_tests_block,
@@ -348,7 +348,7 @@ This concludes my recommendations. The above test covers the happy path.
 
 
 def test_handler_extract_code_dispatches_by_mode() -> None:
-    from pr_test_automator_local.languages.kotlin.handler import (
+    from test_automator.languages.kotlin.handler import (
         KotlinLanguageHandler,
     )
 
@@ -366,7 +366,7 @@ def test_handler_extract_code_dispatches_by_mode() -> None:
 
 
 def test_handler_extract_code_raises_on_unknown_mode() -> None:
-    from pr_test_automator_local.languages.kotlin.handler import (
+    from test_automator.languages.kotlin.handler import (
         KotlinLanguageHandler,
     )
 
@@ -390,7 +390,7 @@ def test_extracts_from_fence_with_package_when_multiple_fences() -> None:
     because it had no `package` line. The new logic picks the fence
     containing the `package` declaration.
     """
-    from pr_test_automator_local.languages.kotlin.extractor import (
+    from test_automator.languages.kotlin.extractor import (
         extract_kotlin_file,
     )
 
@@ -435,7 +435,7 @@ def test_falls_back_to_largest_fence_when_no_package_anywhere() -> None:
     can still try to make sense of it (and may still fail downstream,
     but the failure is more informative).
     """
-    from pr_test_automator_local.languages.kotlin.extractor import (
+    from test_automator.languages.kotlin.extractor import (
         extract_kotlin_file, ExtractionError,
     )
 

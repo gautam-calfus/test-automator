@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from pr_test_automator_local.config import LocalTestConfig
+from test_automator.config import LocalTestConfig
 
 
 # ---------------------------------------------------------------------------
@@ -92,8 +92,8 @@ def test_code_analyzer_logs_function_names(tmp_path, caplog) -> None:
     can immediately see which functions were detected versus missed.
     """
     import logging
-    from pr_test_automator_local.steps.code_analyzer import CodeAnalyzer
-    from pr_test_automator_local.models import PRFile
+    from test_automator.steps.code_analyzer import CodeAnalyzer
+    from test_automator.models import PRFile
 
     # Build a minimal Kotlin source with two functions
     repo = tmp_path
@@ -121,7 +121,7 @@ fun baz() = 2
     )
     analyzer = CodeAnalyzer(config)
 
-    with caplog.at_level(logging.INFO, logger="pr_test_automator_local"):
+    with caplog.at_level(logging.INFO, logger="test_automator"):
         analyzer.analyze([pr_file])
 
     # The log record should include function_names — the actual

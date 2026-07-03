@@ -20,7 +20,7 @@ import textwrap
 
 import pytest
 
-from pr_test_automator_local.languages.java.import_resolver import (
+from test_automator.languages.java.import_resolver import (
     _extract_signature_from_content,
     _synthesize_lombok_getters,
     _build_import_map,
@@ -153,7 +153,7 @@ def test_lombok_getters_filtered_by_referenced_getters():
     for fields whose getter names appear in the set. This keeps the
     prompt small for large aggregators like Acme's Daos (105 fields).
     """
-    from pr_test_automator_local.languages.java.import_resolver import (
+    from test_automator.languages.java.import_resolver import (
         _extract_signature_from_content,
     )
 
@@ -176,7 +176,7 @@ def test_find_referenced_getters_extracts_dot_get_calls():
     """The referenced-getters detector must find ``.getXxx()`` calls
     even in the middle of long expressions.
     """
-    from pr_test_automator_local.languages.java.import_resolver import (
+    from test_automator.languages.java.import_resolver import (
         _find_referenced_getters,
     )
     source = """
@@ -194,7 +194,7 @@ def test_find_referenced_getters_returns_none_when_no_getters():
     """When there are no getter calls, return None (fall back to
     including all fields — safer than filtering to nothing).
     """
-    from pr_test_automator_local.languages.java.import_resolver import (
+    from test_automator.languages.java.import_resolver import (
         _find_referenced_getters,
     )
     source = """

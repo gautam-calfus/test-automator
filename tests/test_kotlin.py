@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import pytest
 
-from pr_test_automator_local.languages import (
+from test_automator.languages import (
     KotlinLanguageHandler,
     all_languages,
     get_handler_by_name,
     get_handler_for_file,
 )
-from pr_test_automator_local.languages.base import LanguageHandler
-from pr_test_automator_local.languages.kotlin import analyzer
+from test_automator.languages.base import LanguageHandler
+from test_automator.languages.kotlin import analyzer
 
 
 # ---------------------------------------------------------------------------
@@ -503,8 +503,8 @@ def test_handler_collection_error_markers_works() -> None:
 
 
 def test_diff_reader_includes_kotlin_files(tmp_path) -> None:
-    from pr_test_automator_local.config import LocalTestConfig
-    from pr_test_automator_local.steps.local_diff_reader import (
+    from test_automator.config import LocalTestConfig
+    from test_automator.steps.local_diff_reader import (
         LocalDiffReader,
     )
 

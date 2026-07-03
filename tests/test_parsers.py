@@ -1,10 +1,10 @@
 """Smoke tests for the diff parser and test-module parser."""
 
-from pr_test_automator_local.utils.diff_parser import (
+from test_automator.utils.diff_parser import (
     extract_code_block,
     parse_changed_lines,
 )
-from pr_test_automator_local.utils.test_parser import (
+from test_automator.utils.test_parser import (
     covers,
     parse_test_functions,
 )

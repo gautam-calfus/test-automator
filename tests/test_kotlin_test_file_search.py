@@ -24,7 +24,7 @@ import os
 
 import pytest
 
-from pr_test_automator_local.languages.kotlin.handler import (
+from test_automator.languages.kotlin.handler import (
     KotlinLanguageHandler,
 )
 
@@ -300,8 +300,8 @@ def test_test_finder_uses_search_fallback(tmp_path) -> None:
     """Integration test: TestFinder's _find_test_file should use the
     handler's search fallback when conventional paths don't exist.
     """
-    from pr_test_automator_local.config import LocalTestConfig
-    from pr_test_automator_local.steps.test_finder import TestFinder
+    from test_automator.config import LocalTestConfig
+    from test_automator.steps.test_finder import TestFinder
 
     repo = str(tmp_path)
     src_rel = _make_source_file(repo)
@@ -314,7 +314,7 @@ def test_test_finder_uses_search_fallback(tmp_path) -> None:
     finder = TestFinder(config)
 
     # Build a minimal AffectedFunction pointing at our source file
-    from pr_test_automator_local.models import AffectedFunction
+    from test_automator.models import AffectedFunction
 
     af = AffectedFunction(
         file_path=src_rel,
@@ -340,8 +340,8 @@ def test_test_finder_prefers_conventional_over_fallback(tmp_path) -> None:
     the conventional candidate (which is checked first in phase 1)
     wins. The fallback search shouldn't even fire.
     """
-    from pr_test_automator_local.config import LocalTestConfig
-    from pr_test_automator_local.steps.test_finder import TestFinder
+    from test_automator.config import LocalTestConfig
+    from test_automator.steps.test_finder import TestFinder
 
     repo = str(tmp_path)
     src_rel = _make_source_file(repo)
@@ -355,7 +355,7 @@ def test_test_finder_prefers_conventional_over_fallback(tmp_path) -> None:
     )
     finder = TestFinder(config)
 
-    from pr_test_automator_local.models import AffectedFunction
+    from test_automator.models import AffectedFunction
 
     af = AffectedFunction(
         file_path=src_rel,

@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import pytest
 
-from pr_test_automator_local.languages.kotlin import analyzer, prompts, runner
-from pr_test_automator_local.languages.kotlin.handler import (
+from test_automator.languages.kotlin import analyzer, prompts, runner
+from test_automator.languages.kotlin.handler import (
     KotlinLanguageHandler,
 )
-from pr_test_automator_local.models import AffectedFunction
+from test_automator.models import AffectedFunction
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +209,7 @@ def test_fresh_prompt_handles_empty_class_context() -> None:
 
 
 def test_incremental_prompt_includes_class_signatures_section() -> None:
-    from pr_test_automator_local.models import ExistingTest
+    from test_automator.models import ExistingTest
 
     fn = AffectedFunction(
         file_path="src/main/kotlin/com/initech/accounts/x/Foo.kt",

@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import pytest
 
-from pr_test_automator_local.languages.java.prompts import (
+from test_automator.languages.java.prompts import (
     _FIX_SOURCE_HARD_CAP,
     _read_source_capped,
     user_prompt_fix,
 )
-from pr_test_automator_local.models import GeneratedTest
+from test_automator.models import GeneratedTest
 
 
 def test_small_source_is_returned_as_is(tmp_path):

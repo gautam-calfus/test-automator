@@ -11,14 +11,14 @@ from __future__ import annotations
 
 import pytest
 
-from pr_test_automator_local.languages.kotlin import merger, prompts
-from pr_test_automator_local.languages.kotlin.handler import (
+from test_automator.languages.kotlin import merger, prompts
+from test_automator.languages.kotlin.handler import (
     KotlinLanguageHandler,
 )
-from pr_test_automator_local.languages.kotlin.merger import (
+from test_automator.languages.kotlin.merger import (
     KotlinTestFunction,
 )
-from pr_test_automator_local.models import (
+from test_automator.models import (
     AffectedFunction,
     ExistingTest,
     GeneratedTest,

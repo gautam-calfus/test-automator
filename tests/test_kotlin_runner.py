@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import pytest
 
-from pr_test_automator_local.languages.kotlin import runner
-from pr_test_automator_local.languages.kotlin.handler import (
+from test_automator.languages.kotlin import runner
+from test_automator.languages.kotlin.handler import (
     KotlinLanguageHandler,
 )
 
@@ -342,7 +342,7 @@ def test_handler_all_prompt_methods_succeed_in_stage_4b() -> None:
     """All three prompt categories work in Stage 4b: fresh,
     incremental, and fix.
     """
-    from pr_test_automator_local.models import AffectedFunction
+    from test_automator.models import AffectedFunction
 
     h = KotlinLanguageHandler()
 
@@ -381,7 +381,7 @@ def test_orchestrator_reports_fail_when_step_fails() -> None:
     run that failed at test_generator, because is_passing only looked at
     test results (which defaulted to True when no tests ran).
     """
-    from pr_test_automator_local.models import (
+    from test_automator.models import (
         PipelineResult,
         StepOutcome,
         TestRunResult,
