@@ -10,6 +10,7 @@ DEFAULT_BOT_EMAIL = "test-automator[bot]@users.noreply.github.com"
 DEFAULT_MAX_FIX_RETRIES = 3
 DEFAULT_CLAUDE_CODE_CMD = "claude"
 DEFAULT_CLAUDE_CODE_TIMEOUT = 180
+DEFAULT_MAX_OUTPUT_TOKENS = 64_000
 DEFAULT_TEST_RUNNER_TIMEOUT = 600
 
 
@@ -59,6 +60,12 @@ class LocalTestConfig:
     open_pr: bool = False
     claude_code_cmd: str = DEFAULT_CLAUDE_CODE_CMD
     claude_code_timeout: int = DEFAULT_CLAUDE_CODE_TIMEOUT
+    claude_code_max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
+    """Output-token cap per Claude Code call, applied via the
+    CLAUDE_CODE_MAX_OUTPUT_TOKENS env var. Claude Code's own default
+    (32K) is too low for a full test file covering several changed
+    methods. A value already set in the environment wins.
+    """
     test_runner_timeout: int = DEFAULT_TEST_RUNNER_TIMEOUT
     bot_name: str = DEFAULT_BOT_NAME
     bot_email: str = DEFAULT_BOT_EMAIL

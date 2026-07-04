@@ -104,6 +104,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Timeout in seconds for each Claude Code call (default: 180).",
     )
     p.add_argument(
+        "--max-output-tokens",
+        type=int,
+        default=64_000,
+        help=(
+            "Output-token cap for each Claude Code call, applied via the "
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS env var (default: 64000; Claude "
+            "Code's own 32000 default is too low for large generated test "
+            "files). A value already set in your environment wins."
+        ),
+    )
+    p.add_argument(
         "--test-runner-timeout",
         type=int,
         default=600,
@@ -223,6 +234,7 @@ def main(argv: list[str] | None = None) -> int:
         open_pr=args.open_pr,
         claude_code_cmd=args.claude_code_cmd,
         claude_code_timeout=args.claude_code_timeout,
+        claude_code_max_output_tokens=args.max_output_tokens,
         test_runner_timeout=args.test_runner_timeout,
         java_file_filter=java_file_filter,
         file_whitelist=(args.file if args.file else None),

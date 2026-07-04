@@ -23,6 +23,26 @@ from test_automator.utils.exceptions import TestGeneratorError
 logger = get_logger(__name__)
 
 
+# Maximum changed functions per LLM call. When a file's diff touches
+# more functions than this, generation is split into multiple calls:
+# the first produces the test file, each later batch adds @Test methods
+# to it (incremental mode against the file generated so far).
+#
+# Real failure this prevents: Acme's QuestionRoutingService had 7
+# changed methods in one diff. A single prompt asked Claude for tests
+# covering all 7 and the response blew the CLI's output-token cap —
+# three runs died on "response exceeded the 32000 output token
+# maximum". Four functions per call keeps responses comfortably under
+# the cap while still amortizing prompt overhead.
+MAX_FUNCTIONS_PER_CALL = 4
+
+
+def _chunk(
+    items: list[AffectedFunction], size: int
+) -> list[list[AffectedFunction]]:
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
 def _extract_code(
     handler: LanguageHandler, raw: str, mode: str, source_path: str
 ) -> str:
@@ -100,16 +120,9 @@ class TestGenerator:
             # in a large batch loses ALL work — up to 40+ minutes of
             # quota-consuming generation calls.
             try:
-                if existing:
-                    generated = self._generate_incremental(
-                        handler, source_path, functions, existing
-                    )
-                    mode = "incremental"
-                else:
-                    generated = self._generate_fresh(
-                        handler, source_path, functions
-                    )
-                    mode = "fresh"
+                generated, mode = self._generate_batched(
+                    handler, source_path, functions, existing
+                )
             except TestGeneratorError as exc:
                 logger.warning(
                     "test generation FAILED for %s — continuing with "
@@ -146,6 +159,76 @@ class TestGenerator:
             )
 
         return results
+
+    def _generate_batched(
+        self,
+        handler: LanguageHandler,
+        source_path: str,
+        functions: list[AffectedFunction],
+        existing: ExistingTest | None,
+    ) -> tuple[GeneratedTest, str]:
+        """Generate tests for one file, splitting large diffs into
+        multiple LLM calls (v0.3.0, see MAX_FUNCTIONS_PER_CALL).
+
+        Batch 1 behaves exactly like the pre-batching code: incremental
+        against a real existing test file, or fresh generation. Each
+        later batch runs in incremental mode against the test file
+        generated so far, and the new @Test methods are merged in.
+
+        A failure in batch 1 propagates (nothing was generated). A
+        failure in a LATER batch is non-fatal: the tests generated so
+        far are kept and returned, with a warning naming the functions
+        left uncovered — partial coverage beats losing completed work.
+        """
+        batches = _chunk(functions, MAX_FUNCTIONS_PER_CALL)
+        if len(batches) > 1:
+            logger.info(
+                "splitting %d changed functions into %d LLM calls "
+                "(max %d per call) | file=%s",
+                len(functions), len(batches), MAX_FUNCTIONS_PER_CALL,
+                source_path,
+            )
+
+        if existing:
+            generated = self._generate_incremental(
+                handler, source_path, batches[0], existing
+            )
+            mode = "incremental"
+        else:
+            generated = self._generate_fresh(
+                handler, source_path, batches[0]
+            )
+            mode = "fresh"
+
+        for i, batch in enumerate(batches[1:], start=2):
+            synthetic = ExistingTest(
+                test_file_path=generated.test_file_path,
+                source_file_path=source_path,
+                content=generated.content,
+            )
+            try:
+                follow_up = self._generate_incremental(
+                    handler, source_path, batch, synthetic
+                )
+            except TestGeneratorError as exc:
+                logger.warning(
+                    "batch %d/%d failed for %s — keeping the tests "
+                    "generated so far; functions left uncovered: %s. "
+                    "Error: %s",
+                    i, len(batches), source_path,
+                    ", ".join(fn.name for fn in batch), exc,
+                )
+                break
+            generated = GeneratedTest(
+                source_file_path=source_path,
+                test_file_path=generated.test_file_path,
+                content=follow_up.content,
+                covered_functions=(
+                    generated.covered_functions + follow_up.covered_functions
+                ),
+            )
+
+        return generated, mode
 
     def _generate_fresh(
         self,

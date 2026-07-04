@@ -50,6 +50,7 @@ class LocalTestPipeline:
         self._llm = llm or ClaudeCodeBridge(
             cmd=config.claude_code_cmd,
             timeout=config.claude_code_timeout,
+            max_output_tokens=config.claude_code_max_output_tokens,
         )
         self._reader = LocalDiffReader(config)
         self._analyzer = CodeAnalyzer(config)

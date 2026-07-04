@@ -41,6 +41,7 @@ pipeline only calls ``LLMBridge.generate(system_prompt, user_prompt)``.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from typing import Protocol
@@ -74,9 +75,11 @@ class ClaudeCodeBridge:
         self,
         cmd: str = "claude",
         timeout: int = 180,
+        max_output_tokens: int = 64_000,
     ) -> None:
         self._cmd = cmd
         self._timeout = timeout
+        self._max_output_tokens = max_output_tokens
         self._verify_available()
 
     def _verify_available(self) -> None:
@@ -116,6 +119,18 @@ class ClaudeCodeBridge:
             user_prompt,
         ]
 
+        # Claude Code caps responses at 32K output tokens by default.
+        # A full JUnit test file for a service with several changed
+        # methods routinely exceeds that (real failure: Acme's
+        # QuestionRoutingService, 7 changed methods — three runs died
+        # on "response exceeded the 32000 output token maximum").
+        # Raise the cap via env var; an explicit value already present
+        # in the environment wins over our default.
+        env = os.environ.copy()
+        env.setdefault(
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS", str(self._max_output_tokens)
+        )
+
         try:
             proc = subprocess.run(
                 cmd,
@@ -123,6 +138,7 @@ class ClaudeCodeBridge:
                 text=True,
                 timeout=self._timeout,
                 check=False,
+                env=env,
             )
         except subprocess.TimeoutExpired as exc:
             raise LLMBridgeError(
