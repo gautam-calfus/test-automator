@@ -48,7 +48,7 @@ from test_automator.models import (
 )
 from test_automator.orchestrator import LocalTestPipeline
 
-__version__ = "0.3.0"
+__version__ = "0.1"
 
 __all__ = [
     "__version__",
