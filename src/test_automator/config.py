@@ -58,6 +58,16 @@ class LocalTestConfig:
     commit_only_if_passing: bool = True
     push: bool = False
     open_pr: bool = False
+    llm_provider: str = "claude"
+    """Which LLM CLI generates the tests: 'claude' (default),
+    'copilot' (GitHub Copilot CLI), 'gemini' (Gemini CLI), or
+    'custom' (any command via llm_cmd). Set via --llm.
+    """
+    llm_cmd: str | None = None
+    """Override the CLI binary for the chosen provider; for 'custom',
+    the full command line to run (prompt appended as last argument).
+    Set via --llm-cmd.
+    """
     claude_code_cmd: str = DEFAULT_CLAUDE_CODE_CMD
     claude_code_timeout: int = DEFAULT_CLAUDE_CODE_TIMEOUT
     claude_code_max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS

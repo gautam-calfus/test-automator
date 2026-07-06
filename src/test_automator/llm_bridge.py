@@ -1,47 +1,50 @@
-"""Subprocess bridge to Claude Code.
+"""Subprocess bridges to LLM CLIs (Claude Code, Copilot CLI, Gemini CLI).
 
-Wraps the ``claude`` CLI so the rest of the pipeline can ask for code
-generation/fixing without caring whether the LLM is a paid API, a local
-model, or an editor-integrated assistant.
+The rest of the pipeline only calls ``LLMBridge.generate(system_prompt,
+user_prompt)`` — it never cares which model or CLI produced the text.
+This module provides one bridge per supported CLI plus a generic bridge
+for anything else, selected via ``--llm`` on the command line:
 
-For the user: install Claude Code first, sign in to your Anthropic account,
-and make sure ``claude --version`` works in your shell. Then this bridge
-shells out to ``claude --print`` for one-shot non-interactive prompts.
+- ``claude``  (default) → ``ClaudeCodeBridge``  — Claude Code
+- ``copilot``           → ``CopilotCliBridge``  — GitHub Copilot CLI
+- ``gemini``            → ``GeminiCliBridge``   — Google Gemini CLI
+- ``custom``            → ``GenericCliBridge``  — any command via --llm-cmd
 
-== Why we use specific Claude Code flags ==
+== Per-CLI invocation notes ==
 
-The naive invocation (``claude --print "<combined prompt>"``) treats
-Claude Code as if it were a plain LLM completion endpoint. It isn't —
-Claude Code is an agentic harness with file-modifying tools (Write,
-Edit, Bash) that the model can call. When given a prompt like "Generate
-a Kotlin test file", the agent often tries to USE the Write tool, then
-narrates "The file write needs your approval" when no permission UI
-is present in a subprocess context. That narration leaks into stdout,
-corrupting the LLM output we feed back into the pipeline.
+**Claude Code** supports true system prompts and tool disabling, so it
+gets the most controlled invocation (see ClaudeCodeBridge below). The
+naive invocation treats Claude Code as a plain completion endpoint; it
+isn't — it's an agentic harness with file-modifying tools. We force
+agent-free single-response behavior with:
 
-We use these flags to force agent-free single-response behavior:
+- ``--tools ""``: disables ALL built-in tools.
+- ``--system-prompt <prompt>``: replaces the default agent system
+  prompt with OUR prompt (the language style guide).
+- ``--output-format text``: plain text, not JSON wrapped.
+- ``--permission-mode bypassPermissions``: belt-and-suspenders.
 
-- ``--tools ""``: disables ALL built-in tools. The agent CANNOT reach
-  for Write, Edit, Bash, etc. Forced into text-only response mode.
-- ``--system-prompt <prompt>``: replaces Claude Code's default agent
-  system prompt with OUR prompt (Strikt + MockK style guide). Without
-  this we'd be appending to Claude Code's "you are a coding agent"
-  defaults which encourage agentic behavior.
-- ``--output-format text``: ensures we get plain text, not JSON wrapped.
-- ``--permission-mode bypassPermissions``: belt-and-suspenders — if a
-  tool somehow slips through, no permission dialog blocks the run.
+These flags were verified against Claude Code 2.1.x.
 
-These flags were verified against Claude Code 2.1.160 (June 2026).
-Older or newer versions may have different flag names — see the
-``_verify_flags_supported`` method.
+**Copilot CLI** (``copilot -p``) and **Gemini CLI** (``gemini -p``) run
+headless: the prompt is passed with ``-p`` and the response is printed
+to stdout. Neither exposes a separate system-prompt flag, so the system
+prompt is prepended to the user prompt. Neither is granted tool
+permissions (no ``--allow-all-tools`` / ``--yolo``), so tool calls are
+denied and the model falls back to text-only output — which is exactly
+what we want.
 
-If you'd rather use a different LLM, replace this module — the rest of the
-pipeline only calls ``LLMBridge.generate(system_prompt, user_prompt)``.
+**Generic** wraps any CLI that takes a prompt as its final argument and
+prints the response to stdout: ``--llm custom --llm-cmd "mycli --flag"``.
+
+All bridges rely on the language extractors being defensive: they strip
+markdown fences and prose regardless of which model produced the output.
 """
 
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 from typing import Protocol
@@ -60,16 +63,109 @@ class LLMBridge(Protocol):
         ...
 
 
-class ClaudeCodeBridge:
-    """Invokes the Claude Code CLI via ``claude --print`` with
-    agent-disabling flags.
-
-    Requires:
-        - ``claude`` 2.1.x or newer on PATH (older versions don't have
-          ``--tools`` or ``--system-prompt``)
-        - You're signed in (run ``claude`` once interactively and
-          complete the OAuth flow if you haven't)
+def _combine_prompts(system_prompt: str, user_prompt: str) -> str:
+    """For CLIs without a system-prompt flag, fold the system prompt
+    into the user prompt. The system prompts already carry strict
+    output-format instructions, which survive this flattening fine.
     """
+    return (
+        f"<instructions>\n{system_prompt}\n</instructions>\n\n{user_prompt}"
+    )
+
+
+class _CliBridge:
+    """Shared subprocess plumbing: availability check, timeout, and
+    error reporting. Subclasses define the argv (and optionally env)
+    for their CLI.
+    """
+
+    provider = "generic"
+
+    def __init__(self, cmd: str, timeout: int = 180) -> None:
+        self._cmd = cmd
+        self._timeout = timeout
+        self._verify_available()
+
+    # -- hooks ---------------------------------------------------------
+
+    def _argv(self, system_prompt: str, user_prompt: str) -> list[str]:
+        raise NotImplementedError
+
+    def _env(self) -> dict[str, str] | None:
+        """Environment for the subprocess. None inherits the parent's."""
+        return None
+
+    def _install_hint(self) -> str:
+        return f"Install the CLI providing `{self._cmd}` and sign in."
+
+    def _flag_error_hint(self) -> str:
+        return (
+            f"The `{self._cmd}` CLI rejected one of our flags — its "
+            f"installed version may be too old or too new for this bridge."
+        )
+
+    # -- shared behavior -------------------------------------------------
+
+    def _verify_available(self) -> None:
+        """Fail early with a helpful message if the CLI isn't installed."""
+        if shutil.which(self._cmd) is None:
+            raise LLMBridgeError(
+                f"`{self._cmd}` not found on PATH. {self._install_hint()}"
+            )
+
+    def generate(self, system_prompt: str, user_prompt: str) -> str:
+        logger.info(
+            "invoking %s cli",
+            self.provider,
+            extra={"chars": len(system_prompt) + len(user_prompt)},
+        )
+
+        cmd = self._argv(system_prompt, user_prompt)
+
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self._timeout,
+                check=False,
+                env=self._env(),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise LLMBridgeError(
+                f"{self.provider} CLI timed out after {self._timeout}s. "
+                "Increase claude_code_timeout in config or simplify the diff."
+            ) from exc
+        except FileNotFoundError as exc:
+            raise LLMBridgeError(
+                f"`{self._cmd}` disappeared mid-run: {exc}"
+            ) from exc
+
+        if proc.returncode != 0:
+            err = (proc.stderr or "") + (proc.stdout or "")
+            if "unknown option" in err.lower() or "unrecognized" in err.lower():
+                raise LLMBridgeError(
+                    f"{self._flag_error_hint()}\n"
+                    f"Underlying error:\nstdout: {proc.stdout[:300]}\n"
+                    f"stderr: {proc.stderr[:300]}"
+                )
+            raise LLMBridgeError(
+                f"{self.provider} CLI returned exit code {proc.returncode}:\n"
+                f"stdout: {proc.stdout[:500]}\n"
+                f"stderr: {proc.stderr[:500]}"
+            )
+
+        return proc.stdout
+
+
+class ClaudeCodeBridge(_CliBridge):
+    """Invokes the Claude Code CLI via ``claude --print`` with
+    agent-disabling flags (see module docstring).
+
+    Requires ``claude`` 2.1.x or newer on PATH, signed in.
+    """
+
+    provider = "claude"
 
     def __init__(
         self,
@@ -77,39 +173,11 @@ class ClaudeCodeBridge:
         timeout: int = 180,
         max_output_tokens: int = 64_000,
     ) -> None:
-        self._cmd = cmd
-        self._timeout = timeout
         self._max_output_tokens = max_output_tokens
-        self._verify_available()
+        super().__init__(cmd=cmd, timeout=timeout)
 
-    def _verify_available(self) -> None:
-        """Fail early with a helpful message if Claude Code isn't installed."""
-        if shutil.which(self._cmd) is None:
-            raise LLMBridgeError(
-                f"`{self._cmd}` not found on PATH. Install Claude Code:\n"
-                f"  npm install -g @anthropic-ai/claude-code\n"
-                f"Then sign in by running `{self._cmd}` once and completing "
-                f"the OAuth prompt."
-            )
-
-    def generate(self, system_prompt: str, user_prompt: str) -> str:
-        """Run Claude Code in non-interactive print mode with tools
-        disabled.
-
-        Why each flag matters: see the module docstring. Briefly:
-        - ``--tools ""`` disables the agentic harness so Claude can't
-          try to write files itself
-        - ``--system-prompt`` replaces Claude Code's default with OUR
-          style guide
-        - ``--output-format text`` plain text (not JSON)
-        - ``--permission-mode bypassPermissions`` safety net
-        """
-        logger.info(
-            "invoking claude code",
-            extra={"chars": len(system_prompt) + len(user_prompt)},
-        )
-
-        cmd = [
+    def _argv(self, system_prompt: str, user_prompt: str) -> list[str]:
+        return [
             self._cmd,
             "--print",
             "--output-format", "text",
@@ -119,6 +187,7 @@ class ClaudeCodeBridge:
             user_prompt,
         ]
 
+    def _env(self) -> dict[str, str]:
         # Claude Code caps responses at 32K output tokens by default.
         # A full JUnit test file for a service with several changed
         # methods routinely exceeds that (real failure: Acme's
@@ -130,44 +199,151 @@ class ClaudeCodeBridge:
         env.setdefault(
             "CLAUDE_CODE_MAX_OUTPUT_TOKENS", str(self._max_output_tokens)
         )
+        return env
 
-        try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=self._timeout,
-                check=False,
-                env=env,
+    def _install_hint(self) -> str:
+        return (
+            "Install Claude Code:\n"
+            "  npm install -g @anthropic-ai/claude-code\n"
+            f"Then sign in by running `{self._cmd}` once and completing "
+            "the OAuth prompt."
+        )
+
+    def _flag_error_hint(self) -> str:
+        return (
+            "Claude Code rejected one of our flags. This bridge requires "
+            "Claude Code 2.1.x or newer (for --tools and --system-prompt). "
+            "Upgrade with:\n  npm install -g @anthropic-ai/claude-code@latest"
+        )
+
+
+class CopilotCliBridge(_CliBridge):
+    """Invokes the GitHub Copilot CLI in programmatic mode:
+    ``copilot -p "<prompt>"``.
+
+    No tool-permission flags are passed, so Copilot cannot modify files
+    or run commands — tool requests are denied and it answers in text.
+    The system prompt is folded into the prompt (no system-prompt flag).
+
+    Requires the Copilot CLI (``npm install -g @github/copilot``) and
+    an authenticated GitHub account with a Copilot subscription.
+    """
+
+    provider = "copilot"
+
+    def __init__(self, cmd: str = "copilot", timeout: int = 180) -> None:
+        super().__init__(cmd=cmd, timeout=timeout)
+
+    def _argv(self, system_prompt: str, user_prompt: str) -> list[str]:
+        return [
+            self._cmd,
+            "-p", _combine_prompts(system_prompt, user_prompt),
+        ]
+
+    def _install_hint(self) -> str:
+        return (
+            "Install the GitHub Copilot CLI:\n"
+            "  npm install -g @github/copilot\n"
+            f"Then run `{self._cmd}` once to authenticate with GitHub."
+        )
+
+
+class GeminiCliBridge(_CliBridge):
+    """Invokes the Google Gemini CLI in headless mode:
+    ``gemini -p "<prompt>"``.
+
+    No ``--yolo`` flag is passed, so Gemini cannot auto-run tools; it
+    answers in text. The system prompt is folded into the prompt.
+
+    Requires the Gemini CLI (``npm install -g @google/gemini-cli``),
+    authenticated (Google login or GEMINI_API_KEY).
+    """
+
+    provider = "gemini"
+
+    def __init__(self, cmd: str = "gemini", timeout: int = 180) -> None:
+        super().__init__(cmd=cmd, timeout=timeout)
+
+    def _argv(self, system_prompt: str, user_prompt: str) -> list[str]:
+        return [
+            self._cmd,
+            "-p", _combine_prompts(system_prompt, user_prompt),
+        ]
+
+    def _install_hint(self) -> str:
+        return (
+            "Install the Gemini CLI:\n"
+            "  npm install -g @google/gemini-cli\n"
+            f"Then run `{self._cmd}` once to authenticate."
+        )
+
+
+class GenericCliBridge(_CliBridge):
+    """Wraps ANY CLI that accepts the prompt as its final argument and
+    prints the model's response to stdout::
+
+        test-automator --llm custom --llm-cmd "mycli --model foo -p"
+
+    The command string is shell-split; the combined system+user prompt
+    is appended as the last argument.
+    """
+
+    provider = "custom"
+
+    def __init__(self, command_line: str, timeout: int = 180) -> None:
+        argv = shlex.split(command_line)
+        if not argv:
+            raise LLMBridgeError(
+                "--llm-cmd is empty — pass the CLI command to run, e.g. "
+                '--llm-cmd "mycli --flag"'
             )
-        except subprocess.TimeoutExpired as exc:
-            raise LLMBridgeError(
-                f"Claude Code timed out after {self._timeout}s. "
-                "Increase claude_code_timeout in config or simplify the diff."
-            ) from exc
-        except FileNotFoundError as exc:
-            raise LLMBridgeError(
-                f"`{self._cmd}` disappeared mid-run: {exc}"
-            ) from exc
+        self._argv_prefix = argv
+        super().__init__(cmd=argv[0], timeout=timeout)
 
-        if proc.returncode != 0:
-            # Detect the specific case where flags aren't supported by
-            # the installed Claude Code version, and give an actionable
-            # error rather than a generic "exit code 1".
-            err = (proc.stderr or "") + (proc.stdout or "")
-            if "unknown option" in err.lower() or "unrecognized" in err.lower():
-                raise LLMBridgeError(
-                    "Claude Code rejected one of our flags. This bridge "
-                    "requires Claude Code 2.1.x or newer (for --tools and "
-                    "--system-prompt). Upgrade with:\n"
-                    "  npm install -g @anthropic-ai/claude-code@latest\n"
-                    f"Underlying error:\nstdout: {proc.stdout[:300]}\n"
-                    f"stderr: {proc.stderr[:300]}"
-                )
+    def _argv(self, system_prompt: str, user_prompt: str) -> list[str]:
+        return self._argv_prefix + [
+            _combine_prompts(system_prompt, user_prompt)
+        ]
+
+
+#: Providers accepted by --llm / config.llm_provider.
+KNOWN_PROVIDERS = ("claude", "copilot", "gemini", "custom")
+
+
+def create_bridge(
+    provider: str = "claude",
+    cmd: str | None = None,
+    timeout: int = 180,
+    max_output_tokens: int = 64_000,
+) -> LLMBridge:
+    """Build the right bridge for ``provider``.
+
+    Args:
+        provider: one of KNOWN_PROVIDERS.
+        cmd: override the CLI binary (or, for ``custom``, the full
+            command line to run — required in that case).
+        timeout: seconds per LLM call (all providers).
+        max_output_tokens: Claude-only response cap (ignored by others,
+            which have no equivalent knob).
+    """
+    if provider == "claude":
+        return ClaudeCodeBridge(
+            cmd=cmd or "claude",
+            timeout=timeout,
+            max_output_tokens=max_output_tokens,
+        )
+    if provider == "copilot":
+        return CopilotCliBridge(cmd=cmd or "copilot", timeout=timeout)
+    if provider == "gemini":
+        return GeminiCliBridge(cmd=cmd or "gemini", timeout=timeout)
+    if provider == "custom":
+        if not cmd:
             raise LLMBridgeError(
-                f"Claude Code returned exit code {proc.returncode}:\n"
-                f"stdout: {proc.stdout[:500]}\n"
-                f"stderr: {proc.stderr[:500]}"
+                "--llm custom requires --llm-cmd with the command to run, "
+                'e.g. --llm custom --llm-cmd "mycli --flag"'
             )
-
-        return proc.stdout
+        return GenericCliBridge(command_line=cmd, timeout=timeout)
+    raise LLMBridgeError(
+        f"Unknown LLM provider {provider!r} — expected one of "
+        f"{', '.join(KNOWN_PROVIDERS)}"
+    )

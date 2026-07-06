@@ -93,15 +93,42 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Open a PR via the `gh` CLI (implies --push).",
     )
     p.add_argument(
-        "--claude-code-cmd",
+        "--llm",
+        choices=["claude", "copilot", "gemini", "custom"],
         default="claude",
-        help="Claude Code CLI command (default: claude).",
+        help=(
+            "Which LLM CLI generates the tests (default: claude). "
+            "'copilot' uses the GitHub Copilot CLI (`copilot -p`), "
+            "'gemini' uses the Gemini CLI (`gemini -p`), 'custom' runs "
+            "the command given by --llm-cmd with the prompt appended."
+        ),
     )
     p.add_argument(
-        "--claude-code-timeout",
+        "--llm-cmd",
+        default=None,
+        help=(
+            "Override the CLI binary for the chosen --llm provider "
+            "(e.g. --llm gemini --llm-cmd /opt/bin/gemini). For "
+            "--llm custom, the full command line to run, e.g. "
+            '--llm custom --llm-cmd "mycli --model foo".'
+        ),
+    )
+    p.add_argument(
+        "--claude-code-cmd",
+        default="claude",
+        help=(
+            "Claude Code CLI command (default: claude). Only used with "
+            "--llm claude; prefer --llm-cmd for other providers."
+        ),
+    )
+    p.add_argument(
+        "--claude-code-timeout", "--llm-timeout",
         type=int,
         default=180,
-        help="Timeout in seconds for each Claude Code call (default: 180).",
+        help=(
+            "Timeout in seconds for each LLM CLI call, regardless of "
+            "provider (default: 180)."
+        ),
     )
     p.add_argument(
         "--max-output-tokens",
@@ -232,6 +259,8 @@ def main(argv: list[str] | None = None) -> int:
         commit_only_if_passing=not args.commit_on_failure,
         push=push,
         open_pr=args.open_pr,
+        llm_provider=args.llm,
+        llm_cmd=args.llm_cmd,
         claude_code_cmd=args.claude_code_cmd,
         claude_code_timeout=args.claude_code_timeout,
         claude_code_max_output_tokens=args.max_output_tokens,

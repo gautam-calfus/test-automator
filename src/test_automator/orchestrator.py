@@ -6,7 +6,7 @@ from typing import Any, Callable
 
 from test_automator._logging import get_logger
 from test_automator.config import LocalTestConfig
-from test_automator.llm_bridge import ClaudeCodeBridge, LLMBridge
+from test_automator.llm_bridge import LLMBridge, create_bridge
 from test_automator.models import (
     AffectedFunction,
     GeneratedTest,
@@ -47,8 +47,15 @@ class LocalTestPipeline:
         llm: LLMBridge | None = None,
     ) -> None:
         self._config = config
-        self._llm = llm or ClaudeCodeBridge(
-            cmd=config.claude_code_cmd,
+        # --llm-cmd overrides the binary for any provider; for the
+        # default claude provider, fall back to the (older) dedicated
+        # --claude-code-cmd flag so existing setups keep working.
+        cmd_override = config.llm_cmd
+        if cmd_override is None and config.llm_provider == "claude":
+            cmd_override = config.claude_code_cmd
+        self._llm = llm or create_bridge(
+            provider=config.llm_provider,
+            cmd=cmd_override,
             timeout=config.claude_code_timeout,
             max_output_tokens=config.claude_code_max_output_tokens,
         )

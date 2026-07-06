@@ -97,8 +97,44 @@ The commit message includes the pytest results, so reviewers see pass/fail count
 | `--commit-tests` | off | Commit the generated tests |
 | `--push` | off | Push the commit; implies `--commit-tests` |
 | `--open-pr` | off | Open PR via `gh`; implies `--push` |
+| `--llm` | `claude` | LLM CLI backend: `claude`, `copilot`, `gemini`, or `custom` |
+| `--llm-cmd` | (provider default) | Override the CLI binary; for `custom`, the full command to run |
 | `--claude-code-cmd` | `claude` | Override if your Claude Code binary is named differently |
-| `--claude-code-timeout` | `180` | Seconds to wait for each Claude Code response |
+| `--claude-code-timeout` / `--llm-timeout` | `180` | Seconds to wait for each LLM CLI response |
+| `--max-output-tokens` | `64000` | Output-token cap per Claude Code call (`CLAUDE_CODE_MAX_OUTPUT_TOKENS`) |
+| `--java-file-filter` | (all) | Java: only generate for `services`, `controllers`, `daos`, `handlers` |
+| `--file` | (all changed) | Only process the named file(s); repeatable |
+
+## Choosing an LLM backend
+
+Test generation works with any of these CLIs — pick with `--llm`:
+
+```bash
+# Claude Code (default; uses your Anthropic subscription)
+test-automator --base-branch main --source-root src
+
+# GitHub Copilot CLI (npm install -g @github/copilot; GitHub auth + Copilot subscription)
+test-automator --llm copilot --base-branch main --source-root src
+
+# Gemini CLI (npm install -g @google/gemini-cli; Google login or GEMINI_API_KEY)
+test-automator --llm gemini --base-branch main --source-root src
+
+# Anything else that takes a prompt as its last argument and prints to stdout
+test-automator --llm custom --llm-cmd "mycli --model foo" --base-branch main --source-root src
+```
+
+Notes:
+
+- All languages (Python, Kotlin, Java) work with every backend — prompts
+  and response parsing are language-side, not model-side.
+- Claude Code gets the most controlled invocation (true system prompt,
+  tools disabled, output-token cap raised). Copilot and Gemini run in
+  their programmatic/headless modes (`-p`) with the style guide folded
+  into the prompt; no tool permissions are granted, so they answer in
+  text only.
+- Test QUALITY varies by model. The prompts encode strict conventions,
+  and the extractors tolerate markdown fences and prose from any model,
+  but the fix loop may need more retries on weaker models.
 
 ## How it integrates with your editor
 
