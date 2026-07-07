@@ -275,6 +275,18 @@ def test_collection_error_markers_include_environment_failures() -> None:
     assert "Could not start your build" in markers
 
 
+def test_collection_error_markers_include_jdk_gradle_mismatch() -> None:
+    """A JDK/Gradle version mismatch (e.g. Gradle 6.9.3 run under JDK 17
+    fails with "Unsupported class file major version 61" before any
+    build script compiles) is an environment error — the fix loop must
+    bail instead of asking the LLM to fix tests that never ran.
+    """
+    markers = runner.collection_error_markers()
+    assert "Unsupported class file major version" in markers
+    assert "Could not determine java version from" in markers
+    assert "Could not compile settings file" in markers
+
+
 def test_collection_markers_skip_real_compile_error_fixture() -> None:
     """v0.2.0a6.post4: a compile-error fixture should NOT trigger the
     bailout. The fix loop should engage and ask Claude to fix the

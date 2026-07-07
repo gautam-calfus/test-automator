@@ -346,4 +346,10 @@ def collection_error_markers() -> tuple[str, ...]:
         "Could not create service of type FileAccessTimeJournal",
         "Timeout waiting to lock journal cache",
         "Could not start your build",
+        # JDK/Gradle version mismatch — e.g. Gradle 6.x run under JDK 17
+        # ("major version 61"). Nothing test-related ever runs; the fix
+        # is pointing JAVA_HOME at a JDK the pinned Gradle supports.
+        "Unsupported class file major version",
+        "Could not determine java version from",
+        "Could not compile settings file",
     )

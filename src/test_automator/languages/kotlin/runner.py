@@ -263,4 +263,11 @@ def collection_error_markers() -> tuple[str, ...]:
         "Timeout waiting to lock journal cache",
         # Gradle init failures
         "Could not start your build",
+        # JDK/Gradle version mismatch — e.g. Gradle 6.x run under JDK 17
+        # ("major version 61"). Groovy can't even parse the build scripts,
+        # so nothing test-related ever runs. Fix is setting JAVA_HOME to
+        # a JDK the project's pinned Gradle supports.
+        "Unsupported class file major version",
+        "Could not determine java version from",
+        "Could not compile settings file",
     )
