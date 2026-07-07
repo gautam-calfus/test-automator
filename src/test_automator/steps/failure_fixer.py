@@ -8,6 +8,8 @@ env issues).
 
 from __future__ import annotations
 
+import re
+
 from test_automator._logging import get_logger
 from test_automator.config import LocalTestConfig
 from test_automator.languages import get_handler_for_file
@@ -130,14 +132,55 @@ class FailureFixer:
 
     @staticmethod
     def _has_failures(gen: GeneratedTest, result: TestRunResult) -> bool:
-        # Strip the extension to match how failed test IDs look in output
+        """Decide whether any of the run's failures belong to this
+        generated test file.
+
+        Two attribution strategies, because failed-test-id formats vary
+        by framework:
+
+        1. File-name match — pytest ids embed the file path
+           (``tests/test_foo.py::test_bar``), so the test file's
+           basename appearing in an id is a reliable signal.
+        2. Covered-function match — Jest ids are bare test titles
+           ("percentageOf clamps to 100") and Kotlin's are backticked
+           English names ("create() saves new user"); neither contains
+           the file name. Both conventions start titles with the source
+           function's name, and ``gen.covered_functions`` records
+           exactly which functions this file covers — so a failed id
+           containing one of those names (word-bounded, to keep
+           ``percentageOf`` from matching ``percentageOfTotal``)
+           attributes the failure to this file.
+
+        Over-attribution is cheap (one redundant fix call whose output
+        merges harmlessly); under-attribution silently disables the fix
+        loop — which is exactly the bug this replaced: before this
+        method knew strategy 2, Jest/Kotlin assertion failures were
+        never attributed, and the fixer looped max_fix_retries times
+        without a single LLM call.
+        """
+        if result.errors > 0:
+            return True
+
+        # Strategy 1: file-name match (pytest-style ids)
         base = gen.test_file_path.split("/")[-1]
-        for ext in (".py", ".java", ".kt", ".js", ".ts", ".tsx"):
+        for ext in (".py", ".java", ".kt", ".js", ".jsx", ".ts", ".tsx",
+                    ".mjs", ".cjs"):
             base = base.removesuffix(ext)
-        return (
-            any(base in tid for tid in result.failed_test_ids)
-            or result.errors > 0
-        )
+        if any(base in tid for tid in result.failed_test_ids):
+            return True
+
+        # Strategy 2: covered-function match (title-style ids)
+        names = {
+            fn.split(".")[-1] for fn in gen.covered_functions if fn
+        }
+        for tid in result.failed_test_ids:
+            for name in names:
+                pattern = (
+                    rf"(?<![A-Za-z0-9_$]){re.escape(name)}(?![A-Za-z0-9_$])"
+                )
+                if re.search(pattern, tid):
+                    return True
+        return False
 
     def _fix_one(
         self, gen: GeneratedTest, runner_output: str
