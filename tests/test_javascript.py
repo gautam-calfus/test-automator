@@ -541,3 +541,143 @@ def test_system_prompts_encode_title_convention() -> None:
     for sp in (h.system_prompt_fresh(), h.system_prompt_incremental()):
         assert "MUST start with the exact source function name" in sp
     assert "ONLY the complete corrected test file" in h.system_prompt_fix()
+
+
+# ---------------------------------------------------------------------------
+# React support
+# ---------------------------------------------------------------------------
+
+
+_COMPONENT_SOURCE = """\
+import React, { useState } from 'react';
+
+export default function Counter({ initial = 0 }) {
+  const [count, setCount] = useState(initial);
+  return (
+    <div>
+      <span data-testid="count">{count}</span>
+      <button onClick={() => setCount(count + 1)}>Increment</button>
+    </div>
+  );
+}
+
+export const Badge = ({ label }) => <span className="badge">{label}</span>;
+"""
+
+
+def test_analyzer_finds_function_component() -> None:
+    affected = analyzer.extract_affected(
+        _COMPONENT_SOURCE, "src/components/Counter.jsx", {7}
+    )
+    assert [fn.name for fn in affected] == ["Counter"]
+
+
+def test_analyzer_finds_expression_body_arrow_component() -> None:
+    affected = analyzer.extract_affected(
+        _COMPONENT_SOURCE, "src/components/Counter.jsx", {13}
+    )
+    assert [fn.name for fn in affected] == ["Badge"]
+
+
+def test_analyzer_parses_typed_tsx_component() -> None:
+    tsx = (
+        "import React from 'react';\n"
+        "type Props = { label: string };\n"
+        "export const Chip: React.FC<Props> = ({ label }) => {\n"
+        "  return <span className=\"chip\">{label}</span>;\n"
+        "};\n"
+    )
+    affected = analyzer.extract_affected(tsx, "src/components/Chip.tsx", {4})
+    assert [fn.name for fn in affected] == ["Chip"]
+
+
+def _affected_with_source(name: str, source: str, path: str) -> AffectedFunction:
+    return AffectedFunction(
+        file_path=path,
+        name=name,
+        qualified_name=name,
+        kind="function",
+        source_code=source,
+        line_start=1,
+        line_end=source.count("\n") + 1,
+    )
+
+
+def test_is_react_source_by_extension() -> None:
+    fn = _affected_with_source("Counter", "function Counter() {}", "a.jsx")
+    assert prompts.is_react_source("src/Counter.jsx", [fn]) is True
+    assert prompts.is_react_source("src/Chip.tsx", [fn]) is True
+
+
+def test_is_react_source_by_jsx_in_plain_js() -> None:
+    fn = _affected_with_source(
+        "App", "function App() {\n  return <div>hi</div>;\n}", "src/App.js"
+    )
+    assert prompts.is_react_source("src/App.js", [fn]) is True
+
+
+def test_is_react_source_by_hook_api_in_plain_js() -> None:
+    fn = _affected_with_source(
+        "useToggle",
+        "function useToggle(v) {\n  const [on, setOn] = useState(v);\n"
+        "  return [on, () => setOn(!on)];\n}",
+        "src/hooks/useToggle.js",
+    )
+    assert prompts.is_react_source("src/hooks/useToggle.js", [fn]) is True
+
+
+def test_plain_node_module_is_not_react() -> None:
+    fn = _affected_with_source(
+        "percentageOf",
+        "function percentageOf(t, v) {\n  return (v * 100) / t;\n}",
+        "src/utils/format.js",
+    )
+    assert prompts.is_react_source("src/utils/format.js", [fn]) is False
+
+
+def test_user_prompt_marks_react_sources() -> None:
+    h = JavaScriptLanguageHandler()
+    fn = _affected_with_source(
+        "Counter",
+        "function Counter() {\n  return <div>hi</div>;\n}",
+        "src/components/Counter.jsx",
+    )
+    prompt = h.user_prompt_fresh("src/components/Counter.jsx", [fn])
+    assert "React component/hook file" in prompt
+
+    plain = _affected_with_source(
+        "add", "function add(a, b) {\n  return a + b;\n}", "src/math.js"
+    )
+    prompt = h.user_prompt_fresh("src/math.js", [plain])
+    assert "plain Node.js module" in prompt
+
+
+def test_system_prompts_include_rtl_guidance() -> None:
+    h = JavaScriptLanguageHandler()
+    fresh = h.system_prompt_fresh()
+    assert "REACT COMPONENTS AND HOOKS" in fresh
+    assert "@testing-library/react" in fresh
+    assert "renderHook" in fresh
+    assert "React Testing" in h.system_prompt_incremental()
+
+
+def test_search_finds_component_test_in_unrelated_directory(tmp_path) -> None:
+    """The user's explicit requirement: tests living in some OTHER
+    directory (here a root-level spec/ tree) must still be found —
+    verified by the import check, not the location.
+    """
+    (tmp_path / "src" / "components").mkdir(parents=True)
+    (tmp_path / "spec" / "ui").mkdir(parents=True)
+    (tmp_path / "src" / "components" / "Counter.jsx").write_text(
+        "export default function Counter() { return <div />; }\n"
+    )
+    (tmp_path / "spec" / "ui" / "Counter.test.jsx").write_text(
+        "import Counter from '../../src/components/Counter';\n"
+        "test('Counter renders', () => {});\n"
+    )
+
+    h = JavaScriptLanguageHandler()
+    found = h.find_existing_test_file_by_search(
+        str(tmp_path), "src/components/Counter.jsx"
+    )
+    assert found == os.path.join("spec", "ui", "Counter.test.jsx")

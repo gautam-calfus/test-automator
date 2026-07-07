@@ -2,7 +2,7 @@
 
 Generate unit tests for changed functions on your **local machine**, using **Claude Code** (or Copilot/Gemini CLI) instead of a pay-per-token API.
 
-Supported languages: **Python** (pytest), **Kotlin** (JUnit 5 + MockK + Strikt), **Java** (JUnit + Mockito), and **JavaScript/TypeScript** (Jest, with Vitest auto-detected).
+Supported languages: **Python** (pytest), **Kotlin** (JUnit 5 + MockK + Strikt), **Java** (JUnit + Mockito), and **JavaScript/TypeScript** (Jest, with Vitest and Create React App auto-detected) — including **React** components and hooks, tested with React Testing Library.
 
 Same pipeline as the GitHub Actions version, but it runs from your terminal, reads `git diff` instead of a GitHub PR, and uses your Claude Code subscription instead of pay-per-API-call. After tests are generated and pass, it can optionally commit them, push the branch, and open a PR via `gh`.
 
@@ -90,6 +90,15 @@ Notes specific to Node projects:
   instead of duplicated.
 - Generated tests mirror the source file's module system (`require` vs
   `import`) so they load under the project's existing Jest/TS config.
+- **React** components and hooks (`.jsx`/`.tsx`, or JSX/hook APIs in
+  plain `.js`/`.ts`) get React Testing Library tests — `render`,
+  `screen`, `fireEvent`, and `renderHook` for custom hooks, asserting
+  on rendered output rather than implementation details. Create React
+  App projects are detected from `package.json` and run through
+  `react-scripts test --watchAll=false` (bare `jest` can't see CRA's
+  embedded config). The project needs `@testing-library/react` and a
+  jsdom test environment installed — standard in CRA/Next/Vite React
+  templates.
 
 ## How it works
 

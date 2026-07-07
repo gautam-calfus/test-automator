@@ -35,14 +35,16 @@ import re
 
 
 def detect_framework(repo_path: str) -> str:
-    """Return "vitest" or "jest" based on package.json.
+    """Return "jest", "vitest", or "react-scripts" based on package.json.
 
     Signal priority:
     1. The ``scripts.test`` command — it's what the team actually runs,
        so it settles mid-migration repos that have both frameworks in
-       devDependencies.
-    2. Which framework appears in dependencies/devDependencies (Jest
-       wins a tie not caught by the script).
+       devDependencies. ``react-scripts test`` (Create React App) is
+       checked first: CRA embeds its Jest config inside react-scripts,
+       so invoking bare ``jest`` there fails with a config error.
+    2. Which framework appears in dependencies/devDependencies
+       (react-scripts implies CRA; Jest wins the remaining tie).
     3. Default to "jest" when package.json is missing or unreadable.
     """
     pkg_path = os.path.join(repo_path, "package.json")
@@ -56,6 +58,8 @@ def detect_framework(repo_path: str) -> str:
     scripts = pkg.get("scripts")
     if isinstance(scripts, dict):
         script = str(scripts.get("test", ""))
+    if "react-scripts" in script:
+        return "react-scripts"
     if "vitest" in script:
         return "vitest"
     if "jest" in script:
@@ -67,6 +71,8 @@ def detect_framework(repo_path: str) -> str:
         if isinstance(section, dict):
             deps.update(section)
 
+    if "react-scripts" in deps:
+        return "react-scripts"
     if "jest" in deps:
         return "jest"
     if "vitest" in deps:
@@ -80,6 +86,18 @@ def build_test_command(test_files: list[str], repo_path: str) -> list[str]:
         return [
             "npx", "--no-install", "vitest", "run",
             "--reporter=json",
+            *test_files,
+        ]
+    if framework == "react-scripts":
+        # CRA: react-scripts test wraps Jest and forwards unknown args
+        # to it. --watchAll=false is essential — without it the runner
+        # enters interactive watch mode and hangs until the subprocess
+        # timeout kills it.
+        return [
+            "npx", "--no-install", "react-scripts", "test",
+            "--watchAll=false",
+            "--ci", "--json",
+            "--runTestsByPath",
             *test_files,
         ]
     return [
@@ -238,7 +256,10 @@ def collection_error_markers() -> tuple[str, ...]:
         "npm ERR!",
         "jest: not found",
         "vitest: not found",
+        "react-scripts: not found",
         "could not determine executable to run",
+        # jsdom test environment missing — project setup, not test content
+        "Cannot find module 'jsdom'",
         # Jest configuration problems — project setup, not test content
         "● Validation Error:",  # "● Validation Error:"
         "Test environment jest-environment",

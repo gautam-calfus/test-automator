@@ -196,3 +196,52 @@ def test_collection_error_markers_are_environment_only() -> None:
     # form must not be a marker.
     assert "Cannot find module" not in markers
     assert "SyntaxError" not in markers
+
+
+# ---------------------------------------------------------------------------
+# React (Create React App) support
+# ---------------------------------------------------------------------------
+
+
+def test_detect_react_scripts_from_test_script(tmp_path) -> None:
+    repo = _write_pkg(
+        tmp_path,
+        {
+            "scripts": {"test": "react-scripts test"},
+            "dependencies": {"react": "^18.0.0", "react-scripts": "5.0.1"},
+        },
+    )
+    assert runner.detect_framework(repo) == "react-scripts"
+
+
+def test_detect_react_scripts_from_dependencies(tmp_path) -> None:
+    repo = _write_pkg(
+        tmp_path, {"dependencies": {"react-scripts": "5.0.1"}}
+    )
+    assert runner.detect_framework(repo) == "react-scripts"
+
+
+def test_react_with_plain_jest_is_not_cra(tmp_path) -> None:
+    """A React project testing with plain Jest (Next.js style) must use
+    the jest command — react-scripts detection requires react-scripts
+    itself, not just react.
+    """
+    repo = _write_pkg(
+        tmp_path,
+        {
+            "dependencies": {"react": "^18.0.0"},
+            "devDependencies": {"jest": "^29.0.0"},
+        },
+    )
+    assert runner.detect_framework(repo) == "jest"
+
+
+def test_build_command_react_scripts_disables_watch_mode(tmp_path) -> None:
+    repo = _write_pkg(
+        tmp_path, {"scripts": {"test": "react-scripts test"}}
+    )
+    cmd = runner.build_test_command(["src/_prbot.App.test.jsx"], repo)
+    assert cmd[:5] == ["npx", "--no-install", "react-scripts", "test",
+                       "--watchAll=false"]
+    assert "--json" in cmd
+    assert "--runTestsByPath" in cmd

@@ -27,6 +27,7 @@ Design decisions encoded here:
 from __future__ import annotations
 
 import os
+import re
 
 from test_automator.models import (
     AffectedFunction,
@@ -83,6 +84,27 @@ ASSERTIONS:
   `toThrow`, `toHaveBeenCalledWith`, `resolves`/`rejects`.
 - Prefer `toEqual` for objects/arrays, `toBe` for primitives.
 
+REACT COMPONENTS AND HOOKS (applies when the user prompt marks the
+source as React):
+- Test components with React Testing Library:
+    import { render, screen, fireEvent } from '@testing-library/react';
+- Assert on rendered output the way a user sees it: prefer
+  `screen.getByRole(...)` and `screen.getByText(...)`; use
+  `getByTestId` only when the component already has data-testid
+  attributes. Never assert on component internals, state, or
+  `container.querySelector` chains, and never use snapshot tests.
+- Simulate interaction with `fireEvent` (e.g.
+  `fireEvent.click(screen.getByRole('button', { name: /increment/i }))`)
+  and assert the visible result.
+- Test custom hooks (functions named `useXxx`) with `renderHook` and
+  `act` from '@testing-library/react':
+    const { result } = renderHook(() => useToggle());
+    act(() => { result.current[1](); });
+- Pass required props explicitly; cover default-prop behavior and
+  conditional rendering branches visible in the JSX.
+- Callback props are jest mocks: `const onSave = jest.fn()` +
+  `expect(onSave).toHaveBeenCalledWith(...)`.
+
 CONSTRAINTS:
 - Use ONLY dependencies that already exist in the project (the test
   framework itself plus what the source file imports). Do NOT add new
@@ -117,6 +139,10 @@ removed), the changed source functions, and what specifically changed.
   followed by a space (tooling depends on this prefix).
 - Match the existing file's style: quote style, `test` vs `it`,
   assertion patterns, indentation.
+- If the user prompt marks the source as React, follow React Testing
+  Library patterns (`render`, `screen`, `fireEvent`, `renderHook` for
+  hooks) and assert on rendered output, never on component internals
+  or snapshots. Reuse the existing file's RTL imports and helpers.
 - Cover the CHANGED behavior specifically — the diff is shown to you.
   Do not re-test unchanged behavior that surviving tests already cover.
 - Tests must be deterministic and must not perform real I/O.
@@ -158,6 +184,7 @@ _USER_TEMPLATE_FRESH = """\
 Generate a new test file for the changed functions below.
 
 SOURCE FILE: {source_file}
+SOURCE KIND: {source_kind}
 TEST FILE TO CREATE: {test_file_path}
 IMPORT THE MODULE UNDER TEST AS: {import_specifier}
   (relative specifier from the test file's directory; add named/default
@@ -180,6 +207,7 @@ _USER_TEMPLATE_INCREMENTAL = """\
 Add tests for the changed functions below to an existing test file.
 
 SOURCE FILE: {source_file}
+SOURCE KIND: {source_kind}
 EXISTING TEST FILE: {test_file_path}
 
 == MODULE CONTEXT (signatures in the source file) ==
@@ -238,6 +266,7 @@ def user_prompt_fresh(
 ) -> str:
     return _USER_TEMPLATE_FRESH.format(
         source_file=source_path,
+        source_kind=_source_kind(source_path, affected),
         test_file_path=test_file_path,
         import_specifier=derive_import_specifier(source_path, test_file_path),
         class_context=_format_class_context(affected),
@@ -255,6 +284,7 @@ def user_prompt_incremental(
 ) -> str:
     return _USER_TEMPLATE_INCREMENTAL.format(
         source_file=source_path,
+        source_kind=_source_kind(source_path, affected),
         test_file_path=existing.test_file_path,
         class_context=_format_class_context(affected),
         functions_code=_render_functions(affected),
@@ -265,6 +295,49 @@ def user_prompt_incremental(
         ),
         trimmed_existing_content=trimmed_existing_content,
     )
+
+
+# Rendered JSX: `return <div`, `=> <Chip`, possibly after an opening
+# paren or newline.
+_JSX_RETURN_RE = re.compile(r"(?:return|=>)\s*\(?\s*<[A-Za-z]")
+
+# React hook APIs — their presence marks a plain .js/.ts file as React
+# code (custom hooks often live in extension-less-of-JSX files).
+_REACT_HOOK_API_RE = re.compile(
+    r"\buse(?:State|Effect|Ref|Memo|Callback|Context|Reducer|"
+    r"LayoutEffect|ImperativeHandle|Transition|DeferredValue)\s*\("
+)
+
+
+def is_react_source(
+    source_path: str, affected: list[AffectedFunction]
+) -> bool:
+    """True if the changed code is React UI code (components or hooks).
+
+    Signals, any of which suffices:
+    - a .jsx/.tsx extension (JSX files are React by definition here)
+    - JSX in a changed function's body (``return <div ...``)
+    - React hook APIs in a changed function's body — catches custom
+      hooks in plain .js/.ts files, which have no JSX of their own
+    """
+    if source_path.endswith((".jsx", ".tsx")):
+        return True
+    for fn in affected:
+        if _JSX_RETURN_RE.search(fn.source_code):
+            return True
+        if _REACT_HOOK_API_RE.search(fn.source_code):
+            return True
+    return False
+
+
+def _source_kind(source_path: str, affected: list[AffectedFunction]) -> str:
+    if is_react_source(source_path, affected):
+        return (
+            "React component/hook file — follow the REACT COMPONENTS "
+            "AND HOOKS section of the style guide (React Testing "
+            "Library; assert on rendered output)"
+        )
+    return "plain Node.js module — no DOM, no React Testing Library"
 
 
 def user_prompt_fix(generated: GeneratedTest, runner_output: str) -> str:
