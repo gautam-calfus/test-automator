@@ -1,6 +1,8 @@
 # test-automator
 
-Generate pytest tests for changed Python functions on your **local machine**, using **Claude Code** instead of the Anthropic API directly.
+Generate unit tests for changed functions on your **local machine**, using **Claude Code** (or Copilot/Gemini CLI) instead of a pay-per-token API.
+
+Supported languages: **Python** (pytest), **Kotlin** (JUnit 5 + MockK + Strikt), **Java** (JUnit + Mockito), and **JavaScript/TypeScript** (Jest, with Vitest auto-detected).
 
 Same pipeline as the GitHub Actions version, but it runs from your terminal, reads `git diff` instead of a GitHub PR, and uses your Claude Code subscription instead of pay-per-API-call. After tests are generated and pass, it can optionally commit them, push the branch, and open a PR via `gh`.
 
@@ -49,7 +51,7 @@ test-automator --help
 
 ## Quick start
 
-In any Python project that has at least one committed change since `main`:
+In any supported project that has at least one committed change since `main`:
 
 ```bash
 cd your-project/
@@ -57,15 +59,37 @@ test-automator --base-branch main --source-root src
 ```
 
 This:
-1. Computes `git diff main...HEAD` and finds Python files changed
-2. Parses each file with AST to find affected functions
+1. Computes `git diff main...HEAD` and finds changed source files
+2. Parses each file (tree-sitter/AST) to find affected functions
 3. Reads any existing test files for those sources
-4. Asks Claude Code to generate or update tests
-5. Runs pytest against the generated tests
-6. If anything fails, asks Claude Code to fix it (once)
+4. Asks the LLM CLI to generate or update tests
+5. Runs the language's real test runner (pytest / Gradle / Jest) against them
+6. If anything fails, asks the LLM to fix it (configurable retries)
 7. Prints a summary
 
 Tests are written to the configured test dir but **not committed** by default. You inspect them, decide what to keep, edit if needed, then commit yourself.
+
+### Node.js (JavaScript/TypeScript) projects
+
+Works the same way — `.js`, `.jsx`, `.ts`, `.tsx`, `.mjs`, and `.cjs` files are picked up automatically:
+
+```bash
+cd your-node-project/
+test-automator --base-branch main --source-root src
+```
+
+Notes specific to Node projects:
+- The project's dependencies must be installed (`npm install`) and Jest or
+  Vitest must be among them — the runner invokes `npx --no-install jest`
+  (or `vitest run`) and never installs packages itself.
+- The framework is auto-detected from `package.json` (the `scripts.test`
+  command wins, then the dependency lists; Jest is the default).
+- New test files are colocated with the source (`src/utils/format.ts` →
+  `src/utils/format.test.ts`). Existing tests at other conventional spots
+  (`*.spec.*`, `__tests__/`, a `tests/` mirror) are found and extended
+  instead of duplicated.
+- Generated tests mirror the source file's module system (`require` vs
+  `import`) so they load under the project's existing Jest/TS config.
 
 ## How it works
 
@@ -169,7 +193,7 @@ This tool runs in your terminal. It works alongside whatever editor you use beca
 - Send anything to Anthropic's API (Claude Code uses your subscription)
 - Run if you have no uncommitted/committed changes since the base branch
 - Enforce a coverage threshold (use `pytest-cov` with `--cov-fail-under` for that)
-- Work for non-Python files (Python only — see the [pluggable-language section](#planned) below if you want Java/TS support)
+- Work for languages other than Python, Kotlin, Java, and JavaScript/TypeScript (other languages plug in via the `LanguageHandler` protocol — see `src/test_automator/languages/`)
 
 ## Cost
 

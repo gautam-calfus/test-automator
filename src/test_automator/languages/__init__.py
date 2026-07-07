@@ -1,8 +1,8 @@
 """Language plugin infrastructure for test-automator.
 
-Each language is a plugin implementing ``LanguageHandler``. Python and
-Kotlin are registered by default. Future plugins (Java, etc.) register
-the same way.
+Each language is a plugin implementing ``LanguageHandler``. Python,
+Kotlin, Java, and JavaScript/TypeScript are registered by default.
+Future plugins register the same way.
 
 Public API:
     LanguageHandler        — the protocol every plugin must implement
@@ -16,6 +16,7 @@ Public API:
 
 from test_automator.languages.base import LanguageHandler
 from test_automator.languages.java import JavaLanguageHandler
+from test_automator.languages.javascript import JavaScriptLanguageHandler
 from test_automator.languages.kotlin import KotlinLanguageHandler
 from test_automator.languages.python import PythonLanguageHandler
 from test_automator.languages.registry import (
@@ -31,12 +32,14 @@ from test_automator.languages.registry import (
 register_language(PythonLanguageHandler())
 register_language(KotlinLanguageHandler())
 register_language(JavaLanguageHandler())
+register_language(JavaScriptLanguageHandler())
 
 __all__ = [
     "LanguageHandler",
     "PythonLanguageHandler",
     "KotlinLanguageHandler",
     "JavaLanguageHandler",
+    "JavaScriptLanguageHandler",
     "register_language",
     "unregister_language",
     "get_handler_by_name",
