@@ -8,11 +8,19 @@ from pydantic import BaseModel
 
 
 class PRFile(BaseModel):
-    """A single file changed since the base branch."""
+    """A single file changed since the base branch.
+
+    ``base_content`` is the file's content at the merge-base with the
+    base branch (None for files that didn't exist there). It lets the
+    analyzer diff the base version's function list against the current
+    one to detect REMOVED functions, so stale tests covering them can
+    be pruned.
+    """
 
     filename: str
     status: str  # added | modified | removed
     patch: str | None = None
+    base_content: str | None = None
 
 
 class PRInfo(BaseModel):
@@ -53,6 +61,18 @@ class AffectedFunction(BaseModel):
     line_end: int
     diff_hunk: str = ""
     class_context: str = ""
+
+
+class RemovedFunction(BaseModel):
+    """A function/method that existed at the merge-base but is gone from
+    the current source (deleted or renamed). Existing tests covering it
+    are stale by definition — they reference symbols that no longer
+    compile/resolve — and get pruned mechanically (no LLM call).
+    """
+
+    file_path: str
+    name: str
+    kind: str = "function"
 
 
 class ExistingTest(BaseModel):

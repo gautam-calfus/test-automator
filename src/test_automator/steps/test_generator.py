@@ -15,6 +15,7 @@ from test_automator.models import (
     AffectedFunction,
     ExistingTest,
     GeneratedTest,
+    RemovedFunction,
 )
 from test_automator.steps.test_finder import TestFinder
 from test_automator.utils.diff_parser import extract_code_block
@@ -91,9 +92,11 @@ class TestGenerator:
         self,
         affected: list[AffectedFunction],
         existing_tests: list[ExistingTest],
+        removed: list[RemovedFunction] | None = None,
     ) -> list[GeneratedTest]:
         by_file = self._group_by_file(affected)
         existing_by_source = {t.source_file_path: t for t in existing_tests}
+        removed_by_file = self._group_removed_by_file(removed or [])
         results: list[GeneratedTest] = []
         failed_files: list[tuple[str, str]] = []
 
@@ -112,6 +115,16 @@ class TestGenerator:
                 configure(self._config.all_test_dirs)
 
             existing = existing_by_source.get(source_path)
+
+            # v0.2: before generating, prune tests that cover functions
+            # REMOVED from this source file. They reference symbols that
+            # no longer exist, so leaving them in guarantees a compile /
+            # import failure regardless of how good the new tests are.
+            removed_here = removed_by_file.get(source_path, [])
+            if existing and removed_here:
+                existing = self._prune_removed(
+                    handler, existing, removed_here
+                )
 
             # v0.3.0: per-file LLM failures are non-fatal. If Claude Code
             # hits its session quota mid-batch (or any other transient
@@ -136,6 +149,39 @@ class TestGenerator:
             logger.info(
                 "generated tests",
                 extra={"source": source_path, "mode": mode},
+            )
+
+        # v0.2: source files whose diff ONLY removes functions never
+        # enter the loop above (no affected functions to generate tests
+        # for) — but their existing test files still reference the
+        # deleted symbols. Prune those tests mechanically; no LLM call
+        # needed.
+        for source_path, removed_here in removed_by_file.items():
+            if source_path in by_file:
+                continue  # already pruned inside the generation loop
+            existing = existing_by_source.get(source_path)
+            if existing is None:
+                continue
+            handler = get_handler_for_file(source_path)
+            if handler is None:
+                continue
+            pruned = self._prune_removed(handler, existing, removed_here)
+            if pruned.content == existing.content:
+                continue
+            results.append(
+                GeneratedTest(
+                    source_file_path=source_path,
+                    test_file_path=existing.test_file_path,
+                    content=pruned.content,
+                    covered_functions=[],
+                )
+            )
+            logger.info(
+                "pruned stale tests for removed functions (no LLM call)",
+                extra={
+                    "test_file": existing.test_file_path,
+                    "removed_functions": [r.name for r in removed_here],
+                },
             )
 
         if failed_files:
@@ -339,6 +385,62 @@ class TestGenerator:
             content=merged,
             covered_functions=[fn.qualified_name for fn in functions],
         )
+
+    def _prune_removed(
+        self,
+        handler: LanguageHandler,
+        existing: ExistingTest,
+        removed: list[RemovedFunction],
+    ) -> ExistingTest:
+        """Strip tests covering removed source functions from
+        ``existing``'s content. Purely mechanical — reuses the same
+        parse/covers/remove machinery incremental mode uses to replace
+        outdated tests. Returns ``existing`` unchanged when the handler
+        lacks that machinery or nothing matches.
+        """
+        parse = getattr(handler, "parse_existing_tests", None)
+        remove_tests = getattr(handler, "remove_tests", None)
+        covers = getattr(handler, "covers", None)
+        if not (callable(parse) and callable(remove_tests) and callable(covers)):
+            return existing
+
+        try:
+            existing_tests = parse(existing.content)
+        except Exception:
+            return existing
+
+        stale = [
+            t
+            for t in existing_tests
+            if any(covers(t.name, r.name) for r in removed)
+        ]
+        if not stale:
+            return existing
+
+        try:
+            trimmed = remove_tests(existing.content, stale)
+        except Exception:
+            return existing
+
+        logger.info(
+            "removing %d stale test(s) covering deleted function(s): %s",
+            len(stale),
+            ", ".join(sorted({t.name for t in stale})),
+        )
+        return ExistingTest(
+            test_file_path=existing.test_file_path,
+            source_file_path=existing.source_file_path,
+            content=trimmed,
+        )
+
+    @staticmethod
+    def _group_removed_by_file(
+        removed: list[RemovedFunction],
+    ) -> dict[str, list[RemovedFunction]]:
+        groups: dict[str, list[RemovedFunction]] = {}
+        for r in removed:
+            groups.setdefault(r.file_path, []).append(r)
+        return groups
 
     @staticmethod
     def _group_by_file(

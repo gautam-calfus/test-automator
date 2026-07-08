@@ -1,9 +1,13 @@
 """Step 1: Read changed files from local git diff.
 
-Filters files by extension based on what's registered in
-``languages``. Stage 1 of the v0.2.0 refactor only registers Python, so
-behavior matches the pre-refactor code; future stages will widen the
-filter automatically when Java/Kotlin handlers register.
+v0.2: the diff now compares the WORKING TREE against the merge-base
+with the base branch — not ``base...HEAD``. That means uncommitted
+modifications, staged changes, and untracked new files are all part of
+the analyzed change set, matching what the developer actually sees in
+their editor. Pass ``--committed-only`` to restore the old
+committed-changes-only behavior.
+
+Filters files by extension based on what's registered in ``languages``.
 """
 
 from __future__ import annotations
@@ -34,7 +38,10 @@ class LocalDiffReader:
         """Return changed source files since ``base_branch``."""
         self._verify_inside_repo()
         self._verify_base_branch_exists()
-        self._warn_if_working_tree_dirty()
+        if self._committed_only():
+            self._warn_if_working_tree_dirty()
+        else:
+            self._note_uncommitted_changes_included()
 
         head_branch = self._current_branch()
         author = self._current_user()
@@ -85,18 +92,43 @@ class LocalDiffReader:
                 f"--base-branch."
             ) from exc
 
+    def _committed_only(self) -> bool:
+        return bool(getattr(self._config, "committed_only", False))
+
+    def _note_uncommitted_changes_included(self) -> None:
+        """Tell the user their uncommitted changes ARE being analyzed.
+
+        v0.2 changed the diff source from ``base...HEAD`` to
+        merge-base-vs-working-tree, so uncommitted and untracked
+        changes are included. This log line makes the new behavior
+        explicit for users accustomed to the old committed-only diff.
+        """
+        try:
+            dirty = self._git_exit_code("diff", "--quiet") != 0
+            staged = self._git_exit_code("diff", "--quiet", "--cached") != 0
+        except Exception:
+            return
+        if dirty or staged:
+            logger.info(
+                "working tree has uncommitted changes — these ARE "
+                "included in the diff (v0.2 behavior). Pass "
+                "--committed-only to diff committed changes only."
+            )
+
     def _warn_if_working_tree_dirty(self) -> None:
         """Warn the user if there are uncommitted changes.
 
-        The bot reads diffs from ``git diff BASE...HEAD`` — which only
-        includes COMMITTED changes. Working-tree (uncommitted) and
+        Only relevant with ``--committed-only``: in that mode the bot
+        reads diffs from ``git diff BASE...HEAD`` — which only includes
+        COMMITTED changes. Working-tree (uncommitted) and
         staged-but-not-committed changes are INVISIBLE to the bot.
 
         This caught a real user out: they made source modifications,
         didn't commit, then ran the bot expecting their changes to be
         tested. The bot ran cleanly against their previously-committed
         diff instead, leaving them confused why "their" functions
-        weren't in the analyzed list. Hours of debugging.
+        weren't in the analyzed list. Hours of debugging. (That incident
+        is why working-tree diffing is now the default.)
 
         This warning makes the assumption explicit.
         """
@@ -170,11 +202,33 @@ class LocalDiffReader:
         except DiffReaderError:
             return "local-user"
 
+    def _merge_base(self) -> str:
+        """SHA of the merge-base between the base branch and HEAD —
+        the same starting point ``base...HEAD`` used, but usable as a
+        single commit to diff the working tree against.
+        """
+        return self._git(
+            "merge-base", self._config.base_branch, "HEAD", capture=True
+        ).strip()
+
     def _collect_changed_files(self) -> list[PRFile]:
-        """List filenames and statuses with git diff --name-status."""
-        diff_range = f"{self._config.base_branch}...HEAD"
+        """List changed files with their statuses and patches.
+
+        Default (v0.2): diff the WORKING TREE against the merge-base
+        with the base branch, so uncommitted and staged changes are
+        included, plus untracked files as additions.
+
+        ``--committed-only``: legacy ``git diff base...HEAD`` behavior.
+        """
+        if self._committed_only():
+            diff_base = f"{self._config.base_branch}...HEAD"
+            include_untracked = False
+        else:
+            diff_base = self._merge_base()
+            include_untracked = True
+
         raw = self._git(
-            "diff", "--name-status", diff_range, capture=True
+            "diff", "--name-status", diff_base, capture=True
         )
 
         result: list[PRFile] = []
@@ -192,20 +246,72 @@ class LocalDiffReader:
             filename = parts[-1]
             status = status_map.get(status_char, "modified")
 
-            patch = None if status == "removed" else self._get_patch(filename)
+            # Patches and base content cost a git subprocess each —
+            # only fetch them for files the pipeline will analyze.
+            eligible = self._is_eligible_source(filename)
+            patch = (
+                None if (status == "removed" or not eligible)
+                else self._get_patch(diff_base, filename)
+            )
+            # Base version's content, used by the analyzer to detect
+            # REMOVED functions. Only meaningful for files that existed
+            # at the base (modified/removed/renamed).
+            base_content = (
+                None if (status == "added" or not eligible)
+                else self._get_base_content(diff_base, filename)
+            )
 
             result.append(
-                PRFile(filename=filename, status=status, patch=patch)
+                PRFile(
+                    filename=filename,
+                    status=status,
+                    patch=patch,
+                    base_content=base_content,
+                )
             )
+
+        if include_untracked:
+            result.extend(self._collect_untracked_files())
 
         return result
 
-    def _get_patch(self, filename: str) -> str | None:
-        diff_range = f"{self._config.base_branch}...HEAD"
+    def _collect_untracked_files(self) -> list[PRFile]:
+        """Untracked (never-committed) files count as additions.
+
+        ``patch=None`` makes the analyzer treat every line as changed,
+        which is exactly right for a brand-new file.
+        """
+        raw = self._git(
+            "ls-files", "--others", "--exclude-standard", capture=True
+        )
+        return [
+            PRFile(filename=line.strip(), status="added", patch=None)
+            for line in raw.splitlines()
+            if line.strip()
+        ]
+
+    def _get_patch(self, diff_base: str, filename: str) -> str | None:
         try:
             return self._git(
-                "diff", diff_range, "--", filename, capture=True
+                "diff", diff_base, "--", filename, capture=True
             )
+        except DiffReaderError:
+            return None
+
+    def _get_base_content(self, diff_base: str, filename: str) -> str | None:
+        """File content at the base of the diff (merge-base commit).
+
+        For the legacy three-dot range, resolve the merge-base first so
+        ``git show`` gets a real commit.
+        """
+        ref = diff_base
+        if "..." in ref:
+            try:
+                ref = self._merge_base()
+            except DiffReaderError:
+                return None
+        try:
+            return self._git("show", f"{ref}:{filename}", capture=True)
         except DiffReaderError:
             return None
 

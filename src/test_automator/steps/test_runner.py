@@ -84,8 +84,9 @@ class TestRunner:
         tests: list[GeneratedTest],
     ) -> TestRunResult:
         written: list[str] = []
+        backups: dict[str, str | None] = {}
         try:
-            written = self._write_tests(handler, tests)
+            written, backups = self._write_tests(tests)
             if not written:
                 return TestRunResult(
                     passed=0,
@@ -99,7 +100,7 @@ class TestRunner:
 
             output, return_code = self._run_subprocess(handler, written)
         finally:
-            self._cleanup(written)
+            self._cleanup(backups)
 
         try:
             parsed = handler.parse_test_output(output, return_code)
@@ -138,59 +139,57 @@ class TestRunner:
 
     def _write_tests(
         self,
-        handler: LanguageHandler,
         tests: list[GeneratedTest],
-    ) -> list[str]:
-        """Write each generated test as a temp file next to where the
-        canonical test file would live.
+    ) -> tuple[list[str], dict[str, str | None]]:
+        """Write each generated test at its CANONICAL path, backing up
+        whatever was there.
 
-        Putting the temp file in the same directory as the canonical
-        ensures the language's test discovery (pytest collection / Gradle
-        test source roots) finds it. The old behavior wrote everything to
-        a single ``tests/`` directory, which broke Kotlin (Gradle expects
-        ``src/test/kotlin/`` layout).
+        v0.2: earlier releases wrote a renamed temp copy (``_PRBotXTest``)
+        ALONGSIDE the canonical test file, leaving the canonical file
+        untouched during the run. That broke a real scenario: when the
+        developer's source changes invalidate the EXISTING test file
+        (e.g. a tested method was removed), compilation keeps failing on
+        the stale canonical file no matter how correct the regenerated
+        tests are — the fix loop can never converge. Writing the
+        generated content at the canonical path means the run validates
+        exactly what the committer will write.
 
-        For some languages the handler may also transform the content for
-        the temp-file run (e.g. Kotlin renames the class to match the
-        temp file name to avoid duplicate-class compile errors). That
-        transformation is delegated to ``handler.transform_for_temp_file``
-        if it exists; otherwise the original content is written.
+        Returns ``(written_paths, backups)`` where ``backups`` maps each
+        written absolute path to its original content, or None if the
+        file didn't exist before (fresh generation). ``_cleanup``
+        restores/removes accordingly, so the working tree is untouched
+        after the run — the committer step does the final write.
         """
         written: list[str] = []
-        transform = getattr(handler, "transform_for_temp_file", None)
+        backups: dict[str, str | None] = {}
 
         for gen in tests:
-            # Temp file lives in the same directory as the canonical
-            # test path. That ensures pytest / Gradle find it.
-            canonical_abs = os.path.join(
-                self._config.repo_path, gen.test_file_path
-            )
-            target_dir = os.path.dirname(canonical_abs)
-            os.makedirs(target_dir, exist_ok=True)
+            dest = os.path.join(self._config.repo_path, gen.test_file_path)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
 
-            safe_name = handler.temp_test_file_name(gen.test_file_path)
-            dest = os.path.join(target_dir, safe_name)
-
-            if os.path.exists(dest):
-                logger.warning(
-                    "skipping write — temp file already exists",
-                    extra={"path": dest},
-                )
-                continue
-
-            content = gen.content
-            if callable(transform):
-                content = transform(content, gen.test_file_path)
+            if dest not in backups:
+                if os.path.exists(dest):
+                    with open(dest, encoding="utf-8") as fh:
+                        backups[dest] = fh.read()
+                else:
+                    backups[dest] = None
 
             with open(dest, "w", encoding="utf-8") as fh:
-                fh.write(content)
+                fh.write(gen.content)
             written.append(dest)
-        return written
+        return written, backups
 
-    def _cleanup(self, paths: list[str]) -> None:
-        for path in paths:
+    def _cleanup(self, backups: dict[str, str | None]) -> None:
+        """Put the working tree back the way we found it: restore
+        pre-existing files' original content, delete files we created.
+        """
+        for path, original in backups.items():
             with contextlib.suppress(OSError):
-                os.remove(path)
+                if original is None:
+                    os.remove(path)
+                else:
+                    with open(path, "w", encoding="utf-8") as fh:
+                        fh.write(original)
 
     def _run_subprocess(
         self, handler: LanguageHandler, test_files: list[str]

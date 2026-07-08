@@ -49,6 +49,12 @@ class LocalTestConfig:
 
     repo_path: str
     base_branch: str = "main"
+    committed_only: bool = False
+    """When True, diff ``base...HEAD`` (committed changes only) like
+    pre-v0.2 releases. Default False: diff the working tree against the
+    merge-base with the base branch, so uncommitted modifications and
+    untracked files are analyzed too. Set via --committed-only.
+    """
     test_dirs: list[str] = field(
         default_factory=lambda: list(DEFAULT_TEST_DIRS),
     )

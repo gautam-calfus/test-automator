@@ -12,7 +12,7 @@ import os
 from test_automator._logging import get_logger
 from test_automator.config import LocalTestConfig
 from test_automator.languages import get_handler_for_file
-from test_automator.models import AffectedFunction, PRFile
+from test_automator.models import AffectedFunction, PRFile, RemovedFunction
 from test_automator.utils.diff_parser import (
     extract_diff_hunk_for_range,
     parse_changed_lines,
@@ -64,6 +64,78 @@ class CodeAnalyzer:
                 )
 
         return affected
+
+    def find_removed(self, files: list[PRFile]) -> list[RemovedFunction]:
+        """Functions that existed at the merge-base but are gone now.
+
+        v0.2: compares the function list extracted from each file's
+        ``base_content`` (its merge-base version) against the current
+        source. Anything present there but absent now was deleted (or
+        renamed) — existing tests covering it can no longer compile, so
+        the generator prunes them mechanically.
+
+        A fully deleted source file counts all of its base functions as
+        removed.
+        """
+        removed: list[RemovedFunction] = []
+
+        for pr_file in files:
+            if not pr_file.base_content:
+                continue
+
+            handler = get_handler_for_file(pr_file.filename)
+            if handler is None:
+                continue
+
+            base_names = self._all_function_names(
+                handler, pr_file.base_content, pr_file.filename
+            )
+            if not base_names:
+                continue
+
+            if pr_file.status == "removed":
+                current_names: set[str] = set()
+            else:
+                current_source = self._read_source(pr_file.filename)
+                if current_source is None:
+                    continue
+                current_names = self._all_function_names(
+                    handler, current_source, pr_file.filename
+                )
+
+            gone = sorted(base_names - current_names)
+            if gone:
+                logger.info(
+                    "removed functions detected — stale tests covering "
+                    "them will be pruned",
+                    extra={
+                        "file": pr_file.filename,
+                        "removed": gone,
+                    },
+                )
+                removed.extend(
+                    RemovedFunction(file_path=pr_file.filename, name=name)
+                    for name in gone
+                )
+
+        return removed
+
+    @staticmethod
+    def _all_function_names(
+        handler, source: str, filename: str
+    ) -> set[str]:
+        """Every function/method name in ``source``, using the handler's
+        own extractor with an all-lines 'changed' set so nothing is
+        filtered out.
+        """
+        all_lines = set(range(1, source.count("\n") + 2))
+        try:
+            functions = handler.extract_affected(source, filename, all_lines)
+        except Exception:
+            # Base-version parsing is best-effort: an unparsable old
+            # revision should never block the pipeline.
+            return set()
+        return {fn.name for fn in functions}
 
     def _analyze_file(self, pr_file: PRFile) -> list[AffectedFunction]:
         handler = get_handler_for_file(pr_file.filename)

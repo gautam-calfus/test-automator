@@ -93,21 +93,28 @@ class LocalTestPipeline:
                 "no eligible source files changed — done. "
                 "Check that your --source-root path matches the actual "
                 "directory case (e.g. 'src/main/kotlin', not "
-                "'src/main/Kotlin'), that your changes are COMMITTED "
-                "(uncommitted working-tree changes are invisible to "
-                "this bot), and that the file extensions are supported "
-                "(.py, .kt)."
+                "'src/main/Kotlin') and that the file extensions are "
+                "supported. Both committed and uncommitted working-tree "
+                "changes are analyzed by default; with --committed-only, "
+                "only COMMITTED changes are visible."
             )
             return self._build_result(
                 steps, tests, test_result, commit_sha, pr_url, files_changed,
                 pr_info.base_branch, pr_info.head_branch,
             )
 
-        affected, step2 = self._step(
-            "code_analyzer", lambda: self._analyzer.analyze(pr_info.files)
+        analysis, step2 = self._step(
+            "code_analyzer",
+            lambda: (
+                self._analyzer.analyze(pr_info.files),
+                # v0.2: functions deleted since the merge-base. Their
+                # existing tests reference dead symbols and get pruned.
+                self._analyzer.find_removed(pr_info.files),
+            ),
         )
         steps.append(step2)
-        if not affected:
+        affected, removed = analysis if analysis else ([], [])
+        if not affected and not removed:
             logger.info("no functions affected — done")
             return self._build_result(
                 steps, tests, test_result, commit_sha, pr_url, files_changed,
@@ -116,8 +123,11 @@ class LocalTestPipeline:
 
         # v0.3.0a6: apply --file whitelist (if set) FIRST. When the user
         # names specific files, that trumps all other filtering.
+        # Both filters only look at .file_path, so they apply to removed
+        # functions the same way they apply to affected ones.
         affected = self._apply_file_whitelist(affected)
-        if not affected:
+        removed = self._apply_file_whitelist(removed)
+        if not affected and not removed:
             logger.info(
                 "no functions remain after --file whitelist — done"
             )
@@ -132,7 +142,8 @@ class LocalTestPipeline:
         # so the diff summary remains complete and honest, but BEFORE
         # test generation so we don't waste LLM calls.
         affected = self._apply_java_file_filter(affected)
-        if not affected:
+        removed = self._apply_java_file_filter(removed)
+        if not affected and not removed:
             logger.info(
                 "no functions remain after --java-file-filter — done"
             )
@@ -142,13 +153,17 @@ class LocalTestPipeline:
             )
 
         existing_tests, step3 = self._step(
-            "test_finder", lambda: self._finder.find(affected)
+            # find() only reads .file_path, so removed functions ride
+            # along — their source files need existing-test lookup too.
+            "test_finder", lambda: self._finder.find(affected + removed)
         )
         steps.append(step3)
 
         tests, step4 = self._step(
             "test_generator",
-            lambda: self._generator.generate(affected, existing_tests or []),
+            lambda: self._generator.generate(
+                affected, existing_tests or [], removed=removed
+            ),
         )
         steps.append(step4)
         if not step4.success or not tests:
@@ -210,10 +225,11 @@ class LocalTestPipeline:
             logger.error(f"step {name} failed: {exc}")
             return None, StepOutcome(step=name, success=False, message=str(exc))
 
-    def _apply_file_whitelist(
-        self, affected: list[AffectedFunction]
-    ) -> list[AffectedFunction]:
+    def _apply_file_whitelist(self, affected: list) -> list:
         """When --file is passed one or more times, drop everything else.
+
+        Works on any items exposing ``.file_path`` (AffectedFunction,
+        RemovedFunction).
 
         Path comparison normalizes both sides so ``./src/main/java/Foo.java``,
         ``src/main/java/Foo.java``, and ``src\\main\\java\\Foo.java`` all
@@ -260,10 +276,11 @@ class LocalTestPipeline:
             p = p[2:]
         return p.rstrip("/")
 
-    def _apply_java_file_filter(
-        self, affected: list[AffectedFunction]
-    ) -> list[AffectedFunction]:
+    def _apply_java_file_filter(self, affected: list) -> list:
         """Filter affected functions by Java file category.
+
+        Works on any items exposing ``.file_path`` (AffectedFunction,
+        RemovedFunction).
 
         The filter is Java-specific. Python/Kotlin functions pass
         through unchanged. Java files matching a category the user

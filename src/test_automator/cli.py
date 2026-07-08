@@ -51,6 +51,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Branch to diff against (default: main).",
     )
     p.add_argument(
+        "--committed-only",
+        action="store_true",
+        help=(
+            "Diff committed changes only (git diff base...HEAD), like "
+            "pre-v0.2 releases. By default the working tree is diffed "
+            "against the merge-base with the base branch, so "
+            "uncommitted and untracked changes are analyzed too."
+        ),
+    )
+    p.add_argument(
         "--test-dirs",
         default="tests",
         help="Comma-separated test dirs, priority order (default: tests).",
@@ -252,6 +262,7 @@ def main(argv: list[str] | None = None) -> int:
     config = LocalTestConfig(
         repo_path=repo_path,
         base_branch=args.base_branch,
+        committed_only=args.committed_only,
         test_dirs=test_dirs,
         source_root=args.source_root,
         max_fix_retries=args.max_fix_retries,
