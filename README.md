@@ -41,7 +41,7 @@ pip install -e .
 
 Or install a tagged release directly:
 ```bash
-pip install "git+https://github.com/gautam-calfus/test-automator.git@v0.3.0"
+pip install "git+https://github.com/gautam-calfus/test-automator.git@v0.1"
 ```
 
 Verify:
@@ -59,7 +59,7 @@ test-automator --base-branch main --source-root src
 ```
 
 This:
-1. Diffs your **working tree** against the merge-base with `main` (so uncommitted and untracked changes count; pass `--committed-only` for the old `git diff main...HEAD` behavior) and finds changed source files
+1. Diffs your **working tree** against the merge-base with `main` (so uncommitted and untracked changes count; pass `--committed-only` to diff committed changes only) and finds changed source files
 2. Parses each file (tree-sitter/AST) to find affected functions — and functions **removed** since the merge-base, whose stale tests are pruned automatically
 3. Reads any existing test files for those sources
 4. Asks the LLM CLI to generate or update tests
@@ -139,7 +139,7 @@ The commit message includes the pytest results, so reviewers see pass/fail count
 |---|---|---|
 | `--repo-path` | (auto-detect) | Path to your repo root |
 | `--base-branch` | `main` | Branch to diff against |
-| `--committed-only` | off | Diff committed changes only (`base...HEAD`), like pre-v0.2 releases |
+| `--committed-only` | off | Diff committed changes only (`base...HEAD`) instead of the working tree |
 | `--test-dirs` | `tests` | Comma-separated test dirs (priority order) |
 | `--source-root` | (none) | Restrict analysis to files under this path |
 | `--max-fix-retries` | `1` | How many times to ask Claude to fix failures |

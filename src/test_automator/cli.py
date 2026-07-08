@@ -54,10 +54,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--committed-only",
         action="store_true",
         help=(
-            "Diff committed changes only (git diff base...HEAD), like "
-            "pre-v0.2 releases. By default the working tree is diffed "
-            "against the merge-base with the base branch, so "
-            "uncommitted and untracked changes are analyzed too."
+            "Diff committed changes only (git diff base...HEAD). By "
+            "default the working tree is diffed against the merge-base "
+            "with the base branch, so uncommitted and untracked "
+            "changes are analyzed too."
         ),
     )
     p.add_argument(

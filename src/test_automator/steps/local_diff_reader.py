@@ -111,8 +111,8 @@ class LocalDiffReader:
         if dirty or staged:
             logger.info(
                 "working tree has uncommitted changes — these ARE "
-                "included in the diff (v0.2 behavior). Pass "
-                "--committed-only to diff committed changes only."
+                "included in the diff. Pass --committed-only to diff "
+                "committed changes only."
             )
 
     def _warn_if_working_tree_dirty(self) -> None:
