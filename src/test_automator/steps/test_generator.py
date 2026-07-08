@@ -94,10 +94,27 @@ class TestGenerator:
         existing_tests: list[ExistingTest],
         removed: list[RemovedFunction] | None = None,
     ) -> list[GeneratedTest]:
+        return list(self.iter_generate(affected, existing_tests, removed))
+
+    def iter_generate(
+        self,
+        affected: list[AffectedFunction],
+        existing_tests: list[ExistingTest],
+        removed: list[RemovedFunction] | None = None,
+    ):
+        """Yield GeneratedTest objects one at a time, as each file's
+        generation completes.
+
+        Streaming (vs returning the full batch) lets the orchestrator
+        run and fix each file's tests IMMEDIATELY, while the next
+        file's generation hasn't happened yet — feedback lands per
+        file instead of after the whole batch, and a failure is
+        attributed to its file by construction.
+        """
         by_file = self._group_by_file(affected)
         existing_by_source = {t.source_file_path: t for t in existing_tests}
         removed_by_file = self._group_removed_by_file(removed or [])
-        results: list[GeneratedTest] = []
+        produced = 0
         failed_files: list[tuple[str, str]] = []
 
         for source_path, functions in by_file.items():
@@ -145,11 +162,12 @@ class TestGenerator:
                 failed_files.append((source_path, str(exc)))
                 continue
 
-            results.append(generated)
             logger.info(
                 "generated tests",
                 extra={"source": source_path, "mode": mode},
             )
+            produced += 1
+            yield generated
 
         # v0.2: source files whose diff ONLY removes functions never
         # enter the loop above (no affected functions to generate tests
@@ -168,20 +186,19 @@ class TestGenerator:
             pruned = self._prune_removed(handler, existing, removed_here)
             if pruned.content == existing.content:
                 continue
-            results.append(
-                GeneratedTest(
-                    source_file_path=source_path,
-                    test_file_path=existing.test_file_path,
-                    content=pruned.content,
-                    covered_functions=[],
-                )
-            )
             logger.info(
                 "pruned stale tests for removed functions (no LLM call)",
                 extra={
                     "test_file": existing.test_file_path,
                     "removed_functions": [r.name for r in removed_here],
                 },
+            )
+            produced += 1
+            yield GeneratedTest(
+                source_file_path=source_path,
+                test_file_path=existing.test_file_path,
+                content=pruned.content,
+                covered_functions=[],
             )
 
         if failed_files:
@@ -190,21 +207,19 @@ class TestGenerator:
                 "files. Successful: %d. Failed files: %s",
                 len(failed_files),
                 len(by_file),
-                len(results),
+                produced,
                 ", ".join(path for path, _ in failed_files),
             )
 
-        # Only raise if EVERYTHING failed (no results at all). Partial
+        # Only raise if EVERYTHING failed (nothing yielded). Partial
         # success is worth preserving — the successful files will be
         # written to disk by the test_committer.
-        if not results and failed_files:
+        if not produced and failed_files:
             first_error = failed_files[0][1]
             raise TestGeneratorError(
                 f"All {len(failed_files)} file(s) failed test generation. "
                 f"First error: {first_error}"
             )
-
-        return results
 
     def _generate_batched(
         self,

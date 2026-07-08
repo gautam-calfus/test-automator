@@ -166,3 +166,84 @@ def test_handler_does_not_use_xml_on_compile_error(tmp_path):
 
     assert result["errors"] == 1
     assert result["is_passing"] is False
+
+
+# --- v0.2: XML fallback also on FAILURE runs (no test-logger plugin) ---
+
+# Plain Gradle failure output: per-test FAILED lines but NO parseable
+# counts. Previously parsed as errors=1 (guessed from nonzero exit).
+_FAILING_GRADLE_OUTPUT = """\
+> Task :compileTestJava
+> Task :test
+
+FooTest > broken() FAILED
+    org.opentest4j.AssertionFailedError at FooTest.java:42
+
+> Task :test FAILED
+
+BUILD FAILED in 6s
+"""
+
+
+def _make_gradle_repo(root):
+    open(os.path.join(root, "build.gradle"), "w").write("// gradle\n")
+    open(os.path.join(root, "gradlew"), "w").write("#!/bin/sh\n")
+
+
+def test_handler_uses_xml_on_failure_run_without_summary(tmp_path):
+    """A nonzero-exit run whose console has no counts should report the
+    real failed count from fresh JUnit XML, not errors=1."""
+    _make_gradle_repo(str(tmp_path))
+    handler = JavaLanguageHandler()
+    handler.build_test_command(
+        ["src/test/java/com/acme/idp/FooTest.java"], str(tmp_path)
+    )
+    # XML written AFTER the run started (fresh)
+    _write_xml(str(tmp_path), "com.acme.idp.FooTest", _FAILING_XML)
+
+    result = handler.parse_test_output(_FAILING_GRADLE_OUTPUT, return_code=1)
+
+    assert result["failed"] == 1
+    assert result["passed"] == 2
+    assert result["is_passing"] is False
+    assert any("broken" in tid for tid in result["failed_test_ids"])
+
+
+def test_handler_ignores_stale_xml_on_failure_run(tmp_path):
+    """On a nonzero exit, XML older than the run start must be ignored
+    so a stale green report can't mask a real compile/failure."""
+    _make_gradle_repo(str(tmp_path))
+    import time
+
+    # Stale XML on disk BEFORE the run starts
+    _write_xml(str(tmp_path), "com.acme.idp.FooTest", _PASSING_XML)
+    old = time.time() - 3600
+    xml_path = os.path.join(
+        str(tmp_path), "build", "test-results", "test",
+        "TEST-com.acme.idp.FooTest.xml",
+    )
+    os.utime(xml_path, (old, old))
+
+    handler = JavaLanguageHandler()
+    handler.build_test_command(
+        ["src/test/java/com/acme/idp/FooTest.java"], str(tmp_path)
+    )
+
+    result = handler.parse_test_output(_FAILING_GRADLE_OUTPUT, return_code=1)
+
+    # Stale XML ignored → falls back to console guess (errors=1)
+    assert result["errors"] == 1
+    assert result["passed"] == 0
+
+
+def test_handler_uses_fresh_xml_even_on_failure(tmp_path):
+    """Same as above but the XML is fresh → it IS used."""
+    _make_gradle_repo(str(tmp_path))
+    handler = JavaLanguageHandler()
+    handler.build_test_command(
+        ["src/test/java/com/acme/idp/FooTest.java"], str(tmp_path)
+    )
+    _write_xml(str(tmp_path), "com.acme.idp.FooTest", _FAILING_XML)
+
+    result = handler.parse_test_output(_FAILING_GRADLE_OUTPUT, return_code=1)
+    assert result["failed"] == 1

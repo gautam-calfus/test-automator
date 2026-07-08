@@ -159,21 +159,37 @@ class LocalTestPipeline:
         )
         steps.append(step3)
 
-        tests, step4 = self._step(
+        # v0.2: generation, running, and fixing are interleaved PER
+        # FILE — each generated file's tests run (and get fixed)
+        # immediately, before the next file is generated. Feedback is
+        # instant and failures are attributed to their file by
+        # construction, so the fixer never burns LLM calls on files
+        # that already pass.
+        gen_out, step4 = self._step(
             "test_generator",
-            lambda: self._generator.generate(
-                affected, existing_tests or [], removed=removed
+            lambda: self._generate_run_fix(
+                affected, existing_tests or [], removed
             ),
         )
         steps.append(step4)
+        tests, solo_result = gen_out if gen_out else ([], None)
         if not step4.success or not tests:
             return self._build_result(
                 steps, tests, test_result, commit_sha, pr_url, files_changed,
                 pr_info.base_branch, pr_info.head_branch,
             )
 
+        # Final combined run: every generated file together, as the
+        # committer would write them. This is the commit gate. With a
+        # single file it would just repeat the per-file run, so its
+        # result is reused.
         test_result, step5 = self._step(
-            "test_runner", lambda: self._runner.run(tests)
+            "test_runner",
+            lambda: (
+                solo_result
+                if solo_result is not None and len(tests) == 1
+                else self._runner.run(tests)
+            ),
         )
         steps.append(step5)
 
@@ -210,6 +226,50 @@ class LocalTestPipeline:
             steps, tests, test_result, commit_sha, pr_url, files_changed,
             pr_info.base_branch, pr_info.head_branch,
         )
+
+    def _generate_run_fix(
+        self,
+        affected: list[AffectedFunction],
+        existing_tests: list,
+        removed: list,
+    ) -> tuple[list[GeneratedTest], TestRunResult | None]:
+        """Generate each file's tests, then run and fix them BEFORE
+        generating the next file.
+
+        Compared to the old generate-everything-then-run-once flow:
+        - a compile error is isolated to the file that caused it (the
+          other files aren't even on disk yet);
+        - the fix loop gets a single file's failures in its prompt and
+          spends LLM calls only on files that actually fail;
+        - a file that can't be fixed doesn't poison judgment of the
+          rest.
+
+        Returns ``(tests, solo_result)`` — ``solo_result`` is the last
+        per-file run result when exactly one file was produced, so the
+        orchestrator can skip a redundant combined run.
+        """
+        tests: list[GeneratedTest] = []
+        last_result: TestRunResult | None = None
+
+        for gen in self._generator.iter_generate(
+            affected, existing_tests, removed
+        ):
+            result = self._runner.run([gen])
+            logger.info(
+                "per-file run | file=%s passed=%s failed=%s errors=%s",
+                gen.test_file_path,
+                result.passed,
+                result.failed,
+                result.errors,
+            )
+            if not result.is_passing:
+                fixed_tests, result = self._fixer.fix([gen], result)
+                if fixed_tests:
+                    gen = fixed_tests[0]
+            tests.append(gen)
+            last_result = result
+
+        return tests, (last_result if len(tests) == 1 else None)
 
     def _step(
         self, name: str, fn: Callable[[], Any]

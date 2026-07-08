@@ -188,6 +188,25 @@ def _is_compile_error(output: str) -> bool:
     return any(m in output for m in _COMPILE_ERROR_MARKERS)
 
 
+def is_compile_error(output: str) -> bool:
+    """Public alias: True when the output shows the build died before
+    any test ran (compile / plugin failure)."""
+    return _is_compile_error(output)
+
+
+def has_console_summary(output: str) -> bool:
+    """True when the console output contains a parseable test summary
+    (Maven Surefire or Gradle test-logger). When False, the counts in
+    ``parse_test_output`` came from exit-code guesswork, and the JUnit
+    XML reports are the better source of truth.
+    """
+    return bool(
+        _MVN_SUMMARY_RE.search(output)
+        or _GRADLE_SUCCESS_RE.search(output)
+        or _GRADLE_FAILURE_RE.search(output)
+    )
+
+
 def parse_test_output(
     output: str, return_code: int
 ) -> dict[str, int | bool | list[str]]:
@@ -256,10 +275,17 @@ def parse_test_output(
 
 
 def parse_test_results_xml(
-    repo_root: str, class_names: set[str]
+    repo_root: str,
+    class_names: set[str],
+    min_mtime: float | None = None,
 ) -> dict[str, int | bool | list[str]] | None:
     """Parse JUnit XML result files as a fallback when the console
     output has no test summary (v0.3.0a10).
+
+    ``min_mtime``: when given, XML files last modified BEFORE this
+    timestamp are ignored. Callers pass the run's start time when the
+    build exited nonzero, so stale reports from an earlier run can
+    never stand in for results the current run didn't produce.
 
     Real Acme failure this fixes: plain ``./gradlew test`` prints NO
     per-test summary when everything passes — the ``SUCCESS: Executed N
@@ -296,8 +322,15 @@ def parse_test_results_xml(
             cls = name[len("TEST-"):-len(".xml")]
             if cls not in class_names:
                 continue
+            full = os.path.join(results_dir, name)
+            if min_mtime is not None:
+                try:
+                    if os.path.getmtime(full) < min_mtime:
+                        continue
+                except OSError:
+                    continue
             try:
-                root = ET.parse(os.path.join(results_dir, name)).getroot()
+                root = ET.parse(full).getroot()
             except (ET.ParseError, OSError):
                 continue
             suites = [root] if root.tag == "testsuite" else root.findall("testsuite")

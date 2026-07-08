@@ -93,6 +93,14 @@ class for the source class that was changed in this PR.
   names. If CLASS SIGNATURES shows ``com.acme.common.Daos``, write
   ``import com.acme.common.Daos;`` — never ``import com.acme.dao.Daos;``.
 
+- **Class NAMES must be copied character-for-character from CLASS
+  SIGNATURES / the source file.** Never change casing, add or drop an
+  ``Impl`` suffix, or otherwise paraphrase a name: if the signature
+  says ``Auth0UserMappingDAOImpl``, writing ``Auth0UserMappingDao``
+  will not compile. If a class you want isn't shown anywhere in the
+  prompt, mock it via the interface/field the source class actually
+  declares instead of guessing its name.
+
 - **Enum return types:** if a method's return type is an ``enum``,
   return the ACTUAL enum value shown in CLASS SIGNATURES (which
   includes enum constants). ``DeactivationCommand.Reason`` has values
@@ -184,6 +192,12 @@ tests in the file (especially mocking patterns and assertion choices).
 When constructing instances of classes from the CLASS SIGNATURES section
 of the user prompt, use the EXACT parameter list shown. Don't invent
 parameters.
+
+Copy class names character-for-character from CLASS SIGNATURES, the
+source file, or the existing test file — never change casing or add or
+drop an ``Impl`` suffix. Prefer classes the existing test file already
+uses; if you need one it doesn't, the bot resolves its import
+automatically as long as the NAME is exactly right.
 
 == Output format — STRICT ==
 

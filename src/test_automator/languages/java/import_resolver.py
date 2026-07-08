@@ -859,3 +859,99 @@ def verify_test_imports(
         )
 
     return "".join(out_lines), corrections
+
+
+# Package declaration: ``package com.example.foo;``
+_PACKAGE_DECL_RE = re.compile(r"^\s*package\s+([\w.]+)\s*;", re.MULTILINE)
+
+# A capitalized identifier used somewhere in the code body — candidate
+# class reference. Two+ chars after the capital, so generic type
+# parameters (T, K, V, E) never match.
+_CLASS_REF_RE = re.compile(r"\b([A-Z][A-Za-z0-9_]{2,})\b")
+
+# Type declarations inside the test file itself (never need an import).
+_DECLARED_TYPE_RE = re.compile(
+    r"\b(?:class|interface|enum|record)\s+([A-Z][A-Za-z0-9_]*)"
+)
+
+
+def add_missing_imports(
+    test_code: str, repo_root: str
+) -> tuple[str, list[str]]:
+    """ADD import lines for repo classes the generated test references
+    in its body but never imports.
+
+    ``verify_test_imports`` fixes import lines that point at the wrong
+    package — but it can't help when the model uses a class (e.g.
+    ``CredentialsService``) and writes NO import at all. The repo index
+    knows where every class lives, so a body reference whose simple
+    name matches exactly ONE repo class is mechanically importable —
+    cheaper than burning a compile + fix-loop round trip.
+
+    Rules per referenced name:
+    - Already imported (directly or via a wildcard on its package),
+      declared in this file, or living in the test's own package →
+      skipped.
+    - Exactly one repo class with that simple name → import added.
+    - Zero or multiple matches → skipped (JDK/library types have zero
+      index matches; ambiguity is left to the compiler rather than
+      guessed).
+
+    False positives (a repo class name appearing only in a comment or
+    string) add an unused import — harmless to javac. Returns
+    ``(code, additions)`` where additions are FQN strings for logging.
+    """
+    try:
+        index = get_repo_index(repo_root)
+    except Exception:
+        return test_code, []
+    if not index.fqn_to_path:
+        return test_code, []
+
+    pkg_match = _PACKAGE_DECL_RE.search(test_code)
+    own_package = pkg_match.group(1) if pkg_match else None
+    imported_simples = {
+        fqn.rsplit(".", 1)[-1] for fqn in _parse_imports(test_code)
+    }
+    wildcard_pkgs = set(_parse_wildcard_imports(test_code))
+    declared = set(_DECLARED_TYPE_RE.findall(test_code))
+
+    # Only scan the body — import/package lines would match their own
+    # class names.
+    body = "\n".join(
+        line
+        for line in test_code.splitlines()
+        if not line.strip().startswith(("import ", "package "))
+    )
+
+    additions: list[str] = []
+    seen: set[str] = set()
+    for name in _CLASS_REF_RE.findall(body):
+        if name in seen:
+            continue
+        seen.add(name)
+        if name in imported_simples or name in declared:
+            continue
+        candidates = index.fqns_for_simple_name(name)
+        if len(candidates) != 1:
+            continue
+        fqn = candidates[0]
+        pkg = fqn.rsplit(".", 1)[0]
+        if pkg == own_package or pkg in wildcard_pkgs:
+            continue
+        additions.append(fqn)
+
+    if not additions:
+        return test_code, []
+
+    lines = test_code.splitlines(keepends=True)
+    insert_at = 0
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("import "):
+            insert_at = i + 1
+        elif stripped.startswith("package ") and insert_at == 0:
+            insert_at = i + 1
+    block = "".join(f"import {fqn};\n" for fqn in sorted(additions))
+    lines.insert(insert_at, block)
+    return "".join(lines), sorted(additions)

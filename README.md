@@ -41,7 +41,7 @@ pip install -e .
 
 Or install a tagged release directly:
 ```bash
-pip install "git+https://github.com/gautam-calfus/test-automator.git@v0.1"
+pip install "git+https://github.com/gautam-calfus/test-automator.git@v0.2"
 ```
 
 Verify:
@@ -105,13 +105,16 @@ Notes specific to Node projects:
 ```mermaid
 flowchart LR
     A["1 · Read git diff<br/><i>what actually changed</i>"] --> B["2 · Pinpoint functions<br/><i>AST-level analysis</i>"]
-    B --> C["3 · AI writes tests<br/><i>your conventions, merged into existing files</i>"]
-    C --> D["4 · Run real test runner<br/><i>pytest · JUnit · Gradle</i>"]
-    D -- fails --> E["5 · Auto-fix<br/><i>errors fed back to the AI</i>"]
+    B --> C["3 · AI writes tests<br/><i>per file · your conventions, merged in</i>"]
+    C --> D["4 · Run real test runner<br/><i>this file's tests · pytest · JUnit · Gradle</i>"]
+    D -- fails --> E["5 · Auto-fix<br/><i>this file's errors fed back to the AI</i>"]
     E -- re-run --> D
-    D -- green --> F["6 · You review<br/><i>commit · push · PR — your call</i>"]
+    D -- green --> C
+    C -- all files done --> F["6 · You review<br/><i>commit · push · PR — your call</i>"]
     style F fill:#ddf0e4,stroke:#1e7d46
 ```
+
+Steps 3–5 run **per file**: each file's tests are generated, run, and fixed before the next file is touched — so a failure is caught immediately and attributed to the file that caused it, and the fixer only spends calls on files that actually fail. A final combined run over all files is the commit gate.
 
 The fix loop is bounded and honest: environment problems (missing dependencies, JDK/Gradle version mismatches, build-cache locks) are detected and reported with actionable messages instead of being "fixed" blindly — the loop only engages for failures the AI can address by rewriting test code.
 

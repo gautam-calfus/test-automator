@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 
 from test_automator._logging import get_logger
 from test_automator.languages.java import (
@@ -79,6 +80,7 @@ class JavaLanguageHandler:
         # fall back to JUnit XML reports for the classes just run.
         self._last_run_repo_path: str | None = None
         self._last_run_test_classes: set[str] = set()
+        self._last_run_started_at: float | None = None
 
     def configure(self, test_dirs: list[str]) -> None:
         """Honor LocalTestConfig.test_dirs if it looks Java-like."""
@@ -342,11 +344,13 @@ class JavaLanguageHandler:
     ) -> list[str]:
         # Remember what we're about to run so parse_test_output can
         # read the matching JUnit XML reports if the console output
-        # has no summary (plain Gradle prints none on success).
+        # has no summary (plain Gradle prints none on success, and
+        # only per-test FAILED lines — no counts — on failure).
         self._last_run_repo_path = repo_path
         self._last_run_test_classes = {
             runner._path_to_class_name(p) for p in test_files
         }
+        self._last_run_started_at = time.time()
         return runner.build_test_command(test_files, repo_path)
 
     def parse_test_output(
@@ -354,31 +358,39 @@ class JavaLanguageHandler:
     ) -> dict[str, int | bool | list[str]]:
         result = runner.parse_test_output(output, return_code)
 
-        # v0.3.0a10: console parse found nothing at all (no summary
-        # line, no compile error, exit 0). Plain Gradle without the
-        # test-logger plugin is SILENT on success, so "nothing" very
-        # likely means "everything passed". Confirm via the JUnit XML
-        # reports for exactly the classes we just ran. On a compile
-        # error or nonzero exit, ``errors`` is already 1 and we never
-        # get here — stale XML can't mask a real failure.
-        nothing_parsed = (
-            result["passed"] == 0
-            and result["failed"] == 0
-            and result["errors"] == 0
+        # Plain Gradle (no test-logger plugin) prints no parseable
+        # summary at all: nothing on success, and per-test FAILED lines
+        # without counts on failure. In both cases the JUnit XML
+        # reports for exactly the classes we just ran are the source
+        # of truth — passed/failed counts AND failed test ids (which
+        # the fixer needs for per-file failure attribution).
+        #
+        # Guard rails:
+        # - Compile errors write no XML for these classes, so we keep
+        #   the console verdict (errors=1) and never look at XML.
+        # - On a nonzero exit, only XML written AFTER this run started
+        #   counts — a stale report from an earlier run can't mask a
+        #   real failure.
+        if runner.has_console_summary(output) or not self._last_run_repo_path:
+            return result
+        if runner.is_compile_error(output):
+            return result
+
+        min_mtime = self._last_run_started_at if return_code != 0 else None
+        xml_result = runner.parse_test_results_xml(
+            self._last_run_repo_path,
+            self._last_run_test_classes,
+            min_mtime=min_mtime,
         )
-        if nothing_parsed and self._last_run_repo_path:
-            xml_result = runner.parse_test_results_xml(
-                self._last_run_repo_path, self._last_run_test_classes
+        if xml_result is not None:
+            logger.info(
+                "console output had no test summary — using JUnit "
+                "XML reports | passed=%s failed=%s errors=%s",
+                xml_result["passed"],
+                xml_result["failed"],
+                xml_result["errors"],
             )
-            if xml_result is not None:
-                logger.info(
-                    "console output had no test summary — using JUnit "
-                    "XML reports | passed=%s failed=%s errors=%s",
-                    xml_result["passed"],
-                    xml_result["failed"],
-                    xml_result["errors"],
-                )
-                return xml_result
+            return xml_result
         return result
 
     def temp_test_file_name(self, test_file_path: str) -> str:
@@ -466,23 +478,30 @@ class JavaLanguageHandler:
 
     def _verify_imports(self, code: str) -> str:
         """Check the generated file's project-internal imports against
-        the repo-wide index and auto-correct invented packages
-        (v0.3.0a10). No-op when repo_root is unknown or the index
-        can't be built.
+        the repo-wide index: auto-correct invented packages on existing
+        import lines, then ADD imports for repo classes referenced in
+        the body with no import at all. No-op when repo_root is unknown
+        or the index can't be built.
         """
         if not self._repo_root:
             return code
         try:
             from test_automator.languages.java.import_resolver import (
+                add_missing_imports,
                 verify_test_imports,
             )
             corrected, corrections = verify_test_imports(
                 code, self._repo_root
             )
+            corrected, additions = add_missing_imports(
+                corrected, self._repo_root
+            )
         except Exception:
             return code
         for correction in corrections:
             logger.info("Corrected generated import: %s", correction)
+        for fqn in additions:
+            logger.info("Added missing import: %s", fqn)
         return corrected
 
     # --- Existing-test parsing + merge -----------------------------------
@@ -491,7 +510,11 @@ class JavaLanguageHandler:
         return merger.parse_existing_test_functions(content)
 
     def merge_new_tests(self, existing: str, new_tests: str) -> str:
-        return merger.merge_new_tests(existing, new_tests)
+        merged = merger.merge_new_tests(existing, new_tests)
+        # Incremental generations produce bare @Test methods, so any
+        # class they reference needs an import in the MERGED file —
+        # run the same verify/add pass fresh-mode output gets.
+        return self._verify_imports(merged)
 
     def extract_test_source(self, content: str, tests: list) -> str:
         return merger.extract_test_source(content, tests)
