@@ -21,6 +21,17 @@ from test_automator.utils.exceptions import FailureFixerError
 
 logger = get_logger(__name__)
 
+# Hard cap on how much runner output is embedded in a fix prompt.
+# Jest/RTL failures include full DOM dumps: a 43-failure run produces
+# 600-800k chars of output, and stuffing that into every per-file fix
+# prompt blows past model context limits — the CLI then returns an
+# empty response instantly and every fix attempt silently no-ops.
+# Failure details lead the output and the summary trails it, so when
+# trimming we keep the head and the tail and drop the middle.
+MAX_RUNNER_OUTPUT_CHARS = 30_000
+_TRIM_HEAD_CHARS = 20_000
+_TRIM_TAIL_CHARS = 10_000
+
 
 class FailureFixer:
     """Asks Claude to fix failing tests, then re-runs."""
@@ -68,8 +79,25 @@ class FailureFixer:
                 },
             )
 
-            current_tests = self._fix_round(current_tests, current_result)
-            current_result = self._runner.run(current_tests)
+            candidate_tests = self._fix_round(current_tests, current_result)
+            candidate_result = self._runner.run(candidate_tests)
+
+            # A "fix" that increases failed+errors is a regression (e.g.
+            # the LLM rewrote passing tests along with failing ones).
+            # Roll back to the pre-round tests so the regression never
+            # becomes the base for the next attempt or the final commit;
+            # the next attempt retries from the best-known state.
+            if self._score(candidate_result) > self._score(current_result):
+                logger.warning(
+                    "fix attempt %d made results worse (failed+errors "
+                    "%d -> %d) — rolling back to the previous test set",
+                    attempt,
+                    self._score(current_result),
+                    self._score(candidate_result),
+                )
+            else:
+                current_tests = candidate_tests
+                current_result = candidate_result
 
         if not current_result.is_passing:
             logger.warning(
@@ -78,6 +106,29 @@ class FailureFixer:
             )
 
         return current_tests, current_result
+
+    @staticmethod
+    def _score(result: TestRunResult) -> int:
+        """Badness of a run: failed + errored tests. Lower is better."""
+        return result.failed + result.errors
+
+    @staticmethod
+    def _trim_runner_output(output: str) -> str:
+        """Cap runner output to MAX_RUNNER_OUTPUT_CHARS for fix prompts.
+
+        Keeps the head (per-test failure details) and the tail (the
+        run summary) and drops the middle, marking the cut so the LLM
+        knows the output is elided rather than complete.
+        """
+        if len(output) <= MAX_RUNNER_OUTPUT_CHARS:
+            return output
+        dropped = len(output) - _TRIM_HEAD_CHARS - _TRIM_TAIL_CHARS
+        return (
+            output[:_TRIM_HEAD_CHARS]
+            + f"\n\n[... runner output trimmed: {dropped} chars elided "
+            f"to fit the prompt ...]\n\n"
+            + output[-_TRIM_TAIL_CHARS:]
+        )
 
     def _is_collection_error(
         self,
@@ -191,6 +242,8 @@ class FailureFixer:
                 f"No language handler for {gen.source_file_path}; cannot "
                 f"build fix prompt."
             )
+
+        runner_output = self._trim_runner_output(runner_output)
 
         try:
             system_prompt = handler.system_prompt_fix()
