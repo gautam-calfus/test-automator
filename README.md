@@ -41,7 +41,7 @@ pip install -e .
 
 Or install a tagged release directly:
 ```bash
-pip install "git+https://github.com/gautam-calfus/test-automator.git@v0.2"
+pip install "git+https://github.com/gautam-calfus/test-automator.git@v0.1"
 ```
 
 Verify:
