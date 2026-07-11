@@ -23,7 +23,10 @@ from test_automator.steps import (
     TestGenerator,
     TestRunner,
 )
-from test_automator.utils.exceptions import LocalTestAutomatorError
+from test_automator.utils.exceptions import (
+    LLMSessionLimitError,
+    LocalTestAutomatorError,
+)
 
 logger = get_logger(__name__)
 
@@ -243,29 +246,94 @@ class LocalTestPipeline:
         Returns ``(tests, solo_result)`` — ``solo_result`` is the last
         per-file run result when exactly one file was produced, so the
         orchestrator can skip a redundant combined run.
+
+        Each file that passes is WRITTEN TO DISK immediately (not held
+        until the end), so if the run aborts — e.g. the LLM session
+        limit is hit — the completed, passing tests are already saved.
+        On a session-limit abort we stop cleanly and return whatever
+        was produced so far.
         """
         tests: list[GeneratedTest] = []
         last_result: TestRunResult | None = None
+        total = self._expected_file_count(affected, removed)
+        idx = 0
 
-        for gen in self._generator.iter_generate(
-            affected, existing_tests, removed
-        ):
-            result = self._runner.run([gen])
-            logger.info(
-                "per-file run | file=%s passed=%s failed=%s errors=%s",
-                gen.test_file_path,
-                result.passed,
-                result.failed,
-                result.errors,
+        try:
+            for gen in self._generator.iter_generate(
+                affected, existing_tests, removed
+            ):
+                idx += 1
+                logger.info(
+                    "[%d/%d] %s", idx, total, gen.source_file_path
+                )
+                result = self._runner.run([gen])
+                logger.info(
+                    "    run: passed=%s failed=%s errors=%s "
+                    "(LLM calls so far: %s)",
+                    result.passed,
+                    result.failed,
+                    result.errors,
+                    getattr(self._llm, "calls_made", "?"),
+                )
+                if not result.is_passing:
+                    fixed_tests, result = self._fixer.fix([gen], result)
+                    if fixed_tests:
+                        gen = fixed_tests[0]
+                    logger.info(
+                        "    after fix: passed=%s failed=%s errors=%s",
+                        result.passed,
+                        result.failed,
+                        result.errors,
+                    )
+                tests.append(gen)
+                last_result = result
+                if result.is_passing:
+                    self._persist(gen)
+                    logger.info(
+                        "    ✓ saved %s (%d/%d done)",
+                        gen.test_file_path,
+                        idx,
+                        total,
+                    )
+                else:
+                    logger.warning(
+                        "    ✗ %s still failing — left for review, "
+                        "not saved as final",
+                        gen.test_file_path,
+                    )
+        except LLMSessionLimitError as exc:
+            passed_files = [t.test_file_path for t in tests if True]
+            logger.warning(
+                "ABORTING run — LLM session/usage limit reached after "
+                "%s call(s). %d file(s) already generated; passing ones "
+                "are saved to disk. %s",
+                getattr(self._llm, "calls_made", "?"),
+                len(tests),
+                exc,
             )
-            if not result.is_passing:
-                fixed_tests, result = self._fixer.fix([gen], result)
-                if fixed_tests:
-                    gen = fixed_tests[0]
-            tests.append(gen)
-            last_result = result
+            logger.warning("Files produced before abort: %s", passed_files)
 
         return tests, (last_result if len(tests) == 1 else None)
+
+    @staticmethod
+    def _expected_file_count(affected: list, removed: list) -> int:
+        paths = {getattr(fn, "file_path", None) for fn in affected}
+        paths |= {getattr(r, "file_path", None) for r in removed}
+        paths.discard(None)
+        return len(paths)
+
+    def _persist(self, gen: GeneratedTest) -> None:
+        """Write a passing test file to its canonical path right away so
+        an abort or crash keeps the completed work. The runner uses
+        backup/restore during its transient run, so nothing is on disk
+        until we write it here; the final committer step is idempotent.
+        """
+        import os
+
+        dest = os.path.join(self._config.repo_path, gen.test_file_path)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, "w", encoding="utf-8") as fh:
+            fh.write(gen.content)
 
     def _step(
         self, name: str, fn: Callable[[], Any]

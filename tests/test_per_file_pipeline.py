@@ -134,6 +134,54 @@ def test_fixer_engages_only_for_the_failing_file(tmp_path) -> None:
     ]
 
 
+def test_session_limit_aborts_but_keeps_passing_files(tmp_path) -> None:
+    """When the LLM session limit is hit mid-run, the loop stops
+    firing calls and the files already generated+passing are saved to
+    disk — not lost."""
+    import os
+
+    from test_automator.utils.exceptions import LLMSessionLimitError
+
+    def _gen_then_limit():
+        yield _gen("alpha")
+        yield _gen("beta")
+        raise LLMSessionLimitError("session limit reached")
+
+    class _GenRaises:
+        def iter_generate(self, affected, existing, removed=None):
+            yield from _gen_then_limit()
+
+    runner = _FakeRunner()
+    fixer = _FakeFixer()
+    p = _pipeline(tmp_path, [], runner, fixer)
+    p._generator = _GenRaises()
+
+    tests, _ = p._generate_run_fix([], [], [])
+
+    # Both files completed before the limit are kept...
+    assert [t.test_file_path for t in tests] == [
+        "tests/test_alpha.py",
+        "tests/test_beta.py",
+    ]
+    # ...and persisted to disk (they passed).
+    assert os.path.exists(os.path.join(str(tmp_path), "tests/test_alpha.py"))
+    assert os.path.exists(os.path.join(str(tmp_path), "tests/test_beta.py"))
+
+
+def test_passing_file_is_persisted_immediately(tmp_path) -> None:
+    """A passing file is written to disk during the per-file loop, not
+    held until a final commit step."""
+    import os
+
+    runner = _FakeRunner()
+    fixer = _FakeFixer()
+    p = _pipeline(tmp_path, [_gen("solo")], runner, fixer)
+
+    p._generate_run_fix([], [], [])
+
+    assert os.path.exists(os.path.join(str(tmp_path), "tests/test_solo.py"))
+
+
 def test_single_file_result_is_reused_as_final(tmp_path) -> None:
     runner = _FakeRunner()
     fixer = _FakeFixer()

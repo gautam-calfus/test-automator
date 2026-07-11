@@ -18,8 +18,12 @@ from test_automator.models import (
     RemovedFunction,
 )
 from test_automator.steps.test_finder import TestFinder
+from test_automator.utils import gen_cache
 from test_automator.utils.diff_parser import extract_code_block
-from test_automator.utils.exceptions import TestGeneratorError
+from test_automator.utils.exceptions import (
+    LLMSessionLimitError,
+    TestGeneratorError,
+)
 
 logger = get_logger(__name__)
 
@@ -128,6 +132,13 @@ class TestGenerator:
 
             functions = self._cap_functions(source_path, functions)
 
+            logger.info(
+                "→ generating tests | file=%s | functions(%d)=%s",
+                source_path,
+                len(functions),
+                ", ".join(fn.name for fn in functions),
+            )
+
             # Some handlers (Python's) need to know the configured test_dirs.
             configure = getattr(handler, "configure", None)
             if callable(configure):
@@ -144,6 +155,45 @@ class TestGenerator:
                 existing = self._prune_removed(
                     handler, existing, removed_here
                 )
+
+            # Determinism + token savings: if nothing that shapes the
+            # output changed since a previous run, reuse the cached
+            # test file verbatim and skip the LLM entirely. Same input
+            # -> same output, which is what makes repeated runs
+            # trustworthy for devs.
+            cache_on = getattr(self._config, "use_cache", True)
+            cache_key = None
+            if cache_on:
+                cache_key = gen_cache.compute_key(
+                    source_path=source_path,
+                    function_sources=[fn.source_code for fn in functions],
+                    mode=("incremental" if existing else "fresh"),
+                    existing_content=existing.content if existing else "",
+                )
+                cached = gen_cache.get(self._config.repo_path, cache_key)
+                if cached is not None:
+                    test_path = (
+                        existing.test_file_path
+                        if existing
+                        else self._test_finder.suggest_test_path(
+                            source_path, existing=None
+                        )
+                    )
+                    logger.info(
+                        "    ⟳ cache hit — reusing tests, no LLM call | "
+                        "file=%s",
+                        source_path,
+                    )
+                    produced += 1
+                    yield GeneratedTest(
+                        source_file_path=source_path,
+                        test_file_path=test_path,
+                        content=cached,
+                        covered_functions=[
+                            fn.qualified_name for fn in functions
+                        ],
+                    )
+                    continue
 
             # v0.3.0: per-file LLM failures are non-fatal. If Claude Code
             # hits its session quota mid-batch (or any other transient
@@ -163,6 +213,11 @@ class TestGenerator:
                 )
                 failed_files.append((source_path, str(exc)))
                 continue
+
+            if cache_on and cache_key:
+                gen_cache.put(
+                    self._config.repo_path, cache_key, generated.content
+                )
 
             logger.info(
                 "generated tests",
@@ -310,6 +365,11 @@ class TestGenerator:
 
         try:
             raw = self._llm.generate(system_prompt, user_prompt)
+        except LLMSessionLimitError:
+            # Quota exhausted — let it propagate so the whole run
+            # aborts instead of being swallowed as a per-file failure
+            # and firing more doomed calls.
+            raise
         except Exception as exc:
             raise TestGeneratorError(
                 f"LLM failed for {source_path}: {exc}"
@@ -386,6 +446,11 @@ class TestGenerator:
 
         try:
             raw = self._llm.generate(system_prompt, user_prompt)
+        except LLMSessionLimitError:
+            # Quota exhausted — let it propagate so the whole run
+            # aborts instead of being swallowed as a per-file failure
+            # and firing more doomed calls.
+            raise
         except Exception as exc:
             raise TestGeneratorError(
                 f"LLM failed for {source_path}: {exc}"

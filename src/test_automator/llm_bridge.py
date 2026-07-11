@@ -50,9 +50,30 @@ import subprocess
 from typing import Protocol
 
 from test_automator._logging import get_logger
-from test_automator.utils.exceptions import LLMBridgeError
+from test_automator.utils.exceptions import (
+    LLMBridgeError,
+    LLMSessionLimitError,
+)
 
 logger = get_logger(__name__)
+
+# Substrings that mean the LLM CLI's usage/session quota is exhausted.
+# When any appears, further calls are pointless until the quota resets,
+# so the bridge raises LLMSessionLimitError and the pipeline aborts.
+_SESSION_LIMIT_MARKERS = (
+    "session limit",
+    "usage limit",
+    "rate limit",
+    "quota",
+    "resets ",
+    "reset at",
+    "too many requests",
+)
+
+
+def _is_session_limit(text: str) -> bool:
+    low = text.lower()
+    return any(m in low for m in _SESSION_LIMIT_MARKERS)
 
 
 class LLMBridge(Protocol):
@@ -84,6 +105,10 @@ class _CliBridge:
     def __init__(self, cmd: str, timeout: int = 180) -> None:
         self._cmd = cmd
         self._timeout = timeout
+        # Running count of LLM invocations this process, surfaced in
+        # per-file progress logs so the user can see how fast a run is
+        # spending its quota.
+        self.calls_made = 0
         self._verify_available()
 
     # -- hooks ---------------------------------------------------------
@@ -114,10 +139,14 @@ class _CliBridge:
             )
 
     def generate(self, system_prompt: str, user_prompt: str) -> str:
+        self.calls_made += 1
         logger.info(
             "invoking %s cli",
             self.provider,
-            extra={"chars": len(system_prompt) + len(user_prompt)},
+            extra={
+                "chars": len(system_prompt) + len(user_prompt),
+                "call": self.calls_made,
+            },
         )
 
         cmd = self._argv(system_prompt, user_prompt)
@@ -143,6 +172,13 @@ class _CliBridge:
 
         if proc.returncode != 0:
             err = (proc.stderr or "") + (proc.stdout or "")
+            if _is_session_limit(err):
+                raise LLMSessionLimitError(
+                    f"{self.provider} CLI usage/session limit reached — "
+                    f"aborting the run to avoid wasted calls. Tests "
+                    f"already generated and passing are kept. Detail: "
+                    f"{err.strip()[:200]}"
+                )
             if "unknown option" in err.lower() or "unrecognized" in err.lower():
                 raise LLMBridgeError(
                     f"{self._flag_error_hint()}\n"

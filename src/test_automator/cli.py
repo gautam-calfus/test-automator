@@ -77,14 +77,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Times to ask Claude to fix failing tests (default: 3).",
     )
     p.add_argument(
+        "--no-cache",
+        action="store_true",
+        help=(
+            "Disable the generated-test cache and force fresh LLM "
+            "generation. By default, unchanged code reuses cached "
+            "tests so repeated runs are deterministic and cheap."
+        ),
+    )
+    p.add_argument(
         "--max-functions-per-file",
         type=int,
-        default=10,
+        default=0,
         help=(
-            "Max changed functions to generate tests for per file "
-            "(default: 10; 0 = unlimited). Keeps a large module from "
-            "fanning out into many LLM calls and hundreds of tests. "
-            "Skipped functions are logged; use --file to target them."
+            "Optional cap on changed functions per file (default: 0 = "
+            "unlimited, cover everything). Set a limit only to bound a "
+            "single very large file; skipped functions are logged so "
+            "you can target them with --file."
         ),
     )
     p.add_argument(
@@ -278,6 +287,7 @@ def main(argv: list[str] | None = None) -> int:
         source_root=args.source_root,
         max_fix_retries=args.max_fix_retries,
         max_functions_per_file=args.max_functions_per_file,
+        use_cache=not args.no_cache,
         commit_tests=commit_tests,
         commit_only_if_passing=not args.commit_on_failure,
         push=push,

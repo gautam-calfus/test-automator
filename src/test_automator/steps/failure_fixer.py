@@ -17,7 +17,10 @@ from test_automator.llm_bridge import LLMBridge
 from test_automator.models import GeneratedTest, TestRunResult
 from test_automator.steps.test_runner import TestRunner
 from test_automator.utils.diff_parser import extract_code_block
-from test_automator.utils.exceptions import FailureFixerError
+from test_automator.utils.exceptions import (
+    FailureFixerError,
+    LLMSessionLimitError,
+)
 
 logger = get_logger(__name__)
 
@@ -271,6 +274,10 @@ class FailureFixer:
 
         try:
             raw = self._llm.generate(system_prompt, user_prompt)
+        except LLMSessionLimitError:
+            # Quota exhausted — propagate so the run aborts instead of
+            # retrying the same doomed call max_fix_retries times.
+            raise
         except Exception as exc:
             raise FailureFixerError(
                 f"LLM failed while fixing {gen.test_file_path}: {exc}"

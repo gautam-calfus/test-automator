@@ -51,3 +51,13 @@ class LLMBridgeError(LocalTestAutomatorError):
 
     def __init__(self, message: str) -> None:
         super().__init__(message, step="llm_bridge")
+
+
+class LLMSessionLimitError(LLMBridgeError):
+    """Raised when the LLM CLI reports the usage/session limit is hit.
+
+    Distinct from a generic bridge failure so the pipeline can ABORT
+    the whole run immediately — every further call would fail the same
+    way — instead of burning attempts on doomed calls, while keeping
+    the tests already generated and passing.
+    """

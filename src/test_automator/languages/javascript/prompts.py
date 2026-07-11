@@ -70,11 +70,10 @@ TEST STRUCTURE:
 - Cover the normal path, edge cases visible in the code (empty input,
   null/undefined where the signature allows it), and error paths
   (`expect(() => fn(bad)).toThrow(...)` / `await expect(p).rejects`).
-- **At most 4 tests per source function** — pick the highest-value
-  cases (one happy path, the key edge/error cases). Do NOT
-  exhaustively enumerate. For a trivial function (e.g. an action
-  creator or a one-line selector that just returns an object), ONE
-  test is enough. Quality and review-ability over quantity.
+- Be thorough: cover every meaningful behavior and branch of each
+  function. Don't pad with near-duplicate tests, but don't skip real
+  cases either. A trivial one-line function needs only one test; a
+  branchy function needs one per branch.
 
 MOCKING:
 - Mock external modules with `jest.mock('<module>')` at the top of the
@@ -150,8 +149,8 @@ removed), the changed source functions, and what specifically changed.
   or snapshots. Reuse the existing file's RTL imports and helpers.
 - Cover the CHANGED behavior specifically — the diff is shown to you.
   Do not re-test unchanged behavior that surviving tests already cover.
-- At most 4 tests per changed function; pick the highest-value cases,
-  don't exhaustively enumerate.
+- Be thorough on the changed behavior: cover each new/modified branch
+  and edge case. Avoid redundant near-duplicate tests.
 - Tests must be deterministic and must not perform real I/O.
 
 OUTPUT:

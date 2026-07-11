@@ -8,12 +8,12 @@ DEFAULT_TEST_DIRS: tuple[str, ...] = ("tests", "test")
 DEFAULT_BOT_NAME = "test-automator[bot]"
 DEFAULT_BOT_EMAIL = "test-automator[bot]@users.noreply.github.com"
 DEFAULT_MAX_FIX_RETRIES = 3
-# Cap changed functions processed per file. A single file touching
-# dozens of functions (e.g. a Redux actions module with 28 exports)
-# otherwise fans out into many LLM calls and hundreds of tests nobody
-# reviews. Beyond the cap the extra functions are skipped with a clear
-# log line suggesting --file to target them. 0 = unlimited.
-DEFAULT_MAX_FUNCTIONS_PER_FILE = 10
+# Optional cap on changed functions processed per file. Default 0 =
+# UNLIMITED: cover everything that changed (thorough coverage is the
+# whole point). A user who wants to bound a single huge file can set
+# --max-functions-per-file; beyond the cap the extra functions are
+# skipped with a clear log line suggesting --file to target them.
+DEFAULT_MAX_FUNCTIONS_PER_FILE = 0
 DEFAULT_CLAUDE_CODE_CMD = "claude"
 DEFAULT_CLAUDE_CODE_TIMEOUT = 180
 DEFAULT_MAX_OUTPUT_TOKENS = 64_000
@@ -72,6 +72,12 @@ class LocalTestConfig:
     LLM calls and an unreviewable pile of tests. Set via
     --max-functions-per-file. Use --file to target specific files when
     a big module's extra functions get skipped."""
+    use_cache: bool = True
+    """Reuse previously generated tests when the source functions,
+    mode, and existing test content are unchanged (content-hash cache).
+    Makes repeated runs DETERMINISTIC — same input, same tests — and
+    skips the LLM entirely on a hit. Disable with --no-cache to force
+    fresh generation every run."""
     commit_tests: bool = False
     commit_only_if_passing: bool = True
     push: bool = False

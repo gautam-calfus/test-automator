@@ -119,3 +119,39 @@ def test_missing_cli_gives_install_hint():
 
 def test_known_providers_matches_cli_choices():
     assert KNOWN_PROVIDERS == ("claude", "copilot", "gemini", "custom")
+
+
+def test_session_limit_output_raises_session_limit_error(monkeypatch):
+    """A CLI exit reporting the usage/session limit must raise the
+    distinct LLMSessionLimitError so the pipeline aborts instead of
+    retrying doomed calls."""
+    from test_automator.utils.exceptions import LLMSessionLimitError
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd, 1,
+            stdout="You've hit your session limit · resets 4:50pm",
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    bridge = CopilotCliBridge(cmd="echo", timeout=5)
+
+    with pytest.raises(LLMSessionLimitError):
+        bridge.generate("sys", "user")
+
+
+def test_session_limit_error_is_a_bridge_error(monkeypatch):
+    """It subclasses LLMBridgeError so existing broad handlers still
+    catch it, but its type lets the pipeline treat it specially."""
+    from test_automator.utils.exceptions import LLMSessionLimitError
+
+    assert issubclass(LLMSessionLimitError, LLMBridgeError)
+
+
+def test_calls_made_counter_increments(captured):
+    bridge = CopilotCliBridge(cmd="echo", timeout=5)
+    assert bridge.calls_made == 0
+    bridge.generate("s", "u")
+    bridge.generate("s", "u")
+    assert bridge.calls_made == 2
