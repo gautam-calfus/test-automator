@@ -126,6 +126,8 @@ class TestGenerator:
                 )
                 continue
 
+            functions = self._cap_functions(source_path, functions)
+
             # Some handlers (Python's) need to know the configured test_dirs.
             configure = getattr(handler, "configure", None)
             if callable(configure):
@@ -447,6 +449,40 @@ class TestGenerator:
             source_file_path=existing.source_file_path,
             content=trimmed,
         )
+
+    def _cap_functions(
+        self, source_path: str, functions: list[AffectedFunction]
+    ) -> list[AffectedFunction]:
+        """Limit changed functions per file to
+        ``config.max_functions_per_file`` (0 = unlimited).
+
+        Prevents a large module (e.g. a Redux actions file with 28
+        exports) from fanning out into many LLM calls and hundreds of
+        tests nobody reviews. Kept functions are the first N in source
+        order; the rest are skipped with a clear, honest log line so
+        the user knows coverage was bounded and how to target the
+        remainder (--file / a bigger --max-functions-per-file).
+        """
+        cap = getattr(self._config, "max_functions_per_file", 0) or 0
+        if cap <= 0 or len(functions) <= cap:
+            return functions
+
+        kept = functions[:cap]
+        skipped = [fn.name for fn in functions[cap:]]
+        logger.warning(
+            "capping %s: %d changed functions > --max-functions-per-file "
+            "(%d). Generating for the first %d; SKIPPED %d: %s. Re-run "
+            "with --file %s (or a higher --max-functions-per-file) to "
+            "cover the rest.",
+            source_path,
+            len(functions),
+            cap,
+            cap,
+            len(skipped),
+            ", ".join(skipped),
+            source_path,
+        )
+        return kept
 
     @staticmethod
     def _group_removed_by_file(

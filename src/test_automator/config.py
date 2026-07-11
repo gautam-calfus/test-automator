@@ -8,6 +8,12 @@ DEFAULT_TEST_DIRS: tuple[str, ...] = ("tests", "test")
 DEFAULT_BOT_NAME = "test-automator[bot]"
 DEFAULT_BOT_EMAIL = "test-automator[bot]@users.noreply.github.com"
 DEFAULT_MAX_FIX_RETRIES = 3
+# Cap changed functions processed per file. A single file touching
+# dozens of functions (e.g. a Redux actions module with 28 exports)
+# otherwise fans out into many LLM calls and hundreds of tests nobody
+# reviews. Beyond the cap the extra functions are skipped with a clear
+# log line suggesting --file to target them. 0 = unlimited.
+DEFAULT_MAX_FUNCTIONS_PER_FILE = 10
 DEFAULT_CLAUDE_CODE_CMD = "claude"
 DEFAULT_CLAUDE_CODE_TIMEOUT = 180
 DEFAULT_MAX_OUTPUT_TOKENS = 64_000
@@ -60,6 +66,12 @@ class LocalTestConfig:
     )
     source_root: str | None = None
     max_fix_retries: int = DEFAULT_MAX_FIX_RETRIES
+    max_functions_per_file: int = DEFAULT_MAX_FUNCTIONS_PER_FILE
+    """Max changed functions to generate tests for per file (0 =
+    unlimited). Keeps a single large file from fanning out into many
+    LLM calls and an unreviewable pile of tests. Set via
+    --max-functions-per-file. Use --file to target specific files when
+    a big module's extra functions get skipped."""
     commit_tests: bool = False
     commit_only_if_passing: bool = True
     push: bool = False

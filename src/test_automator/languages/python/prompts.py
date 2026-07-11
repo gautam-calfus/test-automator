@@ -30,7 +30,10 @@ Generate high-quality, production-ready tests following these rules:
 
 - Use pytest with @pytest.mark.unit for unit tests
 - For async functions, combine @pytest.mark.asyncio with async def
-- Always test: happy path, edge cases (empty/None/boundary values), error cases
+- Test happy path, edge cases (empty/None/boundary values), error cases,
+  but AT MOST 4 tests per source function — pick the highest-value
+  cases rather than exhaustively enumerating. A trivial one-line
+  function needs just ONE test. Favor review-ability over quantity.
 - Mock all external dependencies using pytest-mock or unittest.mock
 - Name tests as test_{function_name}_{scenario}
 - Write descriptive assertion messages
@@ -55,7 +58,8 @@ Other rules:
 - Output ONLY the new test functions (decorators + definitions) — no
   import statements, no module-level code, no markdown, no explanation
 - For async functions, use @pytest.mark.asyncio with async def
-- Test happy path, edge cases, and error cases for each function
+- Test happy path, edge cases, and error cases — at most 4 tests per
+  changed function; pick the highest-value cases, don't enumerate
 - Mock external dependencies using pytest-mock or unittest.mock
 - Name tests as test_{function_name}_{scenario}
 - Do not rename existing tests; if replacing a test named X, your new

@@ -148,7 +148,7 @@ Focus your tests on the DIFF HUNK. The full function source is for
 context only — do NOT generate exhaustive tests for unchanged code.
 
 Hard limits:
-- Generate at most 6 tests per source function. Pick the most
+- Generate at most 4 tests per source function. Pick the most
   important behaviors of the changed code: the new behavior, an edge
   case, and an error case if applicable.
 - Each test body should be <= 25 lines. Big tests with extensive Faker
@@ -406,7 +406,7 @@ Test file (existing):  {test_file_path}
 
 Generate ONLY the new ``@Test`` method declarations to add to the file.
 Focus on the CHANGED lines (the "WHAT CHANGED" section above) — do not
-write tests for code that wasn't changed. Maximum 6 tests per source
+write tests for code that wasn't changed. Maximum 4 tests per source
 function. Match the style of the existing tests above. Reuse the
 class-level mocks and slots that are already declared. When constructing
 instances of the classes above, USE THE EXACT CONSTRUCTOR SIGNATURE

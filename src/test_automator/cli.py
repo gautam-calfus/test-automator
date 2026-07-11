@@ -77,6 +77,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Times to ask Claude to fix failing tests (default: 3).",
     )
     p.add_argument(
+        "--max-functions-per-file",
+        type=int,
+        default=10,
+        help=(
+            "Max changed functions to generate tests for per file "
+            "(default: 10; 0 = unlimited). Keeps a large module from "
+            "fanning out into many LLM calls and hundreds of tests. "
+            "Skipped functions are logged; use --file to target them."
+        ),
+    )
+    p.add_argument(
         "--commit-tests",
         action="store_true",
         help=(
@@ -266,6 +277,7 @@ def main(argv: list[str] | None = None) -> int:
         test_dirs=test_dirs,
         source_root=args.source_root,
         max_fix_retries=args.max_fix_retries,
+        max_functions_per_file=args.max_functions_per_file,
         commit_tests=commit_tests,
         commit_only_if_passing=not args.commit_on_failure,
         push=push,

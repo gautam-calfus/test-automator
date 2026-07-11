@@ -186,7 +186,7 @@ Just the new ``@Test`` methods. Do NOT include:
 == What to test ==
 
 Focus on the CHANGED behavior — the lines added/modified by the diff.
-Maximum 6 tests per source function. Match the style of the existing
+Maximum 4 tests per source function. Match the style of the existing
 tests in the file (especially mocking patterns and assertion choices).
 
 When constructing instances of classes from the CLASS SIGNATURES section
@@ -357,7 +357,7 @@ Test file (existing):  {test_file_path}
 
 Generate ONLY the new ``@Test`` method declarations to add to the file.
 Focus on the CHANGED lines (the "WHAT CHANGED" section above) — do not
-write tests for code that wasn't changed. Maximum 6 tests per source
+write tests for code that wasn't changed. Maximum 4 tests per source
 method. Match the style of the existing tests above. Reuse the
 class-level mocks and ``@BeforeEach`` setup that are already declared.
 Do not write a package declaration, imports, or class wrapper — those
