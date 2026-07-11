@@ -180,8 +180,13 @@ class LocalTestPipeline:
             )
 
         # Final combined run: every generated file together, as the
-        # committer would write them. This is the commit gate. With a
-        # single file it would just repeat the per-file run, so its
+        # committer would write them. This is a pure pass/fail commit
+        # GATE — no fixing. Every file was already generated, run, and
+        # fixed in isolation inside _generate_run_fix; re-running the
+        # fixer here would just repeat that work in one giant combined
+        # prompt (re-sending every failing file), which is exactly the
+        # token blowup v0.2's per-file flow exists to avoid. With a
+        # single file the combined run equals the per-file run, so its
         # result is reused.
         test_result, step5 = self._step(
             "test_runner",
@@ -192,15 +197,6 @@ class LocalTestPipeline:
             ),
         )
         steps.append(step5)
-
-        if test_result and not test_result.is_passing:
-            fixed, step6 = self._step(
-                "failure_fixer",
-                lambda: self._fixer.fix(tests, test_result),
-            )
-            if fixed is not None:
-                tests, test_result = fixed
-            steps.append(step6)
 
         commit_result, step7 = self._step(
             "test_committer",

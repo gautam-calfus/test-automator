@@ -89,11 +89,14 @@ class FailureFixer:
             # the next attempt retries from the best-known state.
             if self._score(candidate_result) > self._score(current_result):
                 logger.warning(
-                    "fix attempt %d made results worse (failed+errors "
-                    "%d -> %d) — rolling back to the previous test set",
+                    "fix attempt %d made results worse "
+                    "(failed=%d errors=%d -> failed=%d errors=%d) — "
+                    "rolling back to the previous test set",
                     attempt,
-                    self._score(current_result),
-                    self._score(candidate_result),
+                    current_result.failed,
+                    current_result.errors,
+                    candidate_result.failed,
+                    candidate_result.errors,
                 )
             else:
                 current_tests = candidate_tests
@@ -107,10 +110,22 @@ class FailureFixer:
 
         return current_tests, current_result
 
-    @staticmethod
-    def _score(result: TestRunResult) -> int:
-        """Badness of a run: failed + errored tests. Lower is better."""
-        return result.failed + result.errors
+    # An ``errors`` count means a whole file/suite never ran (collection
+    # or compile failure) — strictly worse than any number of individual
+    # assertion failures, which at least mean the tests EXECUTED. Weight
+    # errors far above failures so that a fix turning ``errors=1`` (0
+    # tests ran) into ``failed=28`` (28 tests now run and fail) is scored
+    # as PROGRESS and accepted, not rolled back. Without this the guard
+    # clings to an uncompilable file and burns every retry. 100_000
+    # exceeds any realistic per-run test count.
+    _ERROR_WEIGHT = 100_000
+
+    @classmethod
+    def _score(cls, result: TestRunResult) -> int:
+        """Badness of a run. Lower is better. A run where nothing
+        executed (errors > 0) always scores worse than one where tests
+        ran, however many failed."""
+        return result.errors * cls._ERROR_WEIGHT + result.failed
 
     @staticmethod
     def _trim_runner_output(output: str) -> str:

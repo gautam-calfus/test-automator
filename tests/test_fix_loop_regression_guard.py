@@ -202,3 +202,44 @@ def test_equal_score_round_is_adopted_not_rolled_back() -> None:
     final_tests, _ = fixer.fix(original, _result(failed=11))
 
     assert final_tests[0].content == "// sideways rewrite"
+
+
+def test_clearing_a_collection_error_is_progress_not_regression() -> None:
+    """The uknowviews-react bug: initial run is errors=1 (whole file
+    won't compile, 0 tests ran); the fix makes it compile so tests now
+    RUN but many fail (failed=28). That is forward progress — the
+    candidate must be ADOPTED, not rolled back to the uncompilable
+    file. Weighting errors above failures is what makes this hold."""
+    original = [_gen("// uncompilable")]
+    compiles = [_gen("// compiles, 28 assertions fail")]
+
+    # initial: errors=1 (0 ran). candidate: failed=28, errors=0.
+    runner = _QueuedRunner([_result(failed=28, errors=0, passed=0)])
+    fixer = _ScriptedFixer(_config(max_fix_retries=1), runner, [compiles])
+
+    final_tests, final_result = fixer.fix(
+        original, _result(failed=0, errors=1, passed=0)
+    )
+
+    assert final_tests[0].content == "// compiles, 28 assertions fail"
+    assert final_result.errors == 0
+    assert final_result.failed == 28
+
+
+def test_introducing_a_collection_error_is_rolled_back() -> None:
+    """The inverse: a run that was executing (failed=3) must not be
+    replaced by one that no longer compiles (errors=1), even though 1 <
+    3 by raw count — errors weigh more."""
+    original = [_gen("// runs, 3 fail")]
+    broke = [_gen("// now uncompilable")]
+
+    runner = _QueuedRunner([_result(failed=0, errors=1, passed=0)])
+    fixer = _ScriptedFixer(_config(max_fix_retries=1), runner, [broke])
+
+    final_tests, final_result = fixer.fix(
+        original, _result(failed=3, errors=0)
+    )
+
+    assert final_tests[0].content == "// runs, 3 fail"
+    assert final_result.failed == 3
+    assert final_result.errors == 0
