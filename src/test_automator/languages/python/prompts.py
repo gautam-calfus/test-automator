@@ -158,14 +158,29 @@ Return the fully corrected test module.
 # ---------------------------------------------------------------------------
 
 
+def _project_symbols_section(affected: list[AffectedFunction]) -> str:
+    """Resolved signatures of the file's project-internal imports
+    (populated on ``class_context`` by the analyzer). Shown to the model
+    so it uses exact names/params instead of guessing. Empty when the
+    file imports nothing project-internal."""
+    for fn in affected:
+        ctx = getattr(fn, "class_context", "") or ""
+        if ctx.strip():
+            return f"\n{ctx}\n\n"
+    return ""
+
+
 def user_prompt_fresh(
     source_path: str, affected: list[AffectedFunction]
 ) -> str:
     """Build the user prompt for generating a brand-new test file."""
     functions_code = "\n\n".join(fn.source_code for fn in affected)
-    return _USER_TEMPLATE_FRESH.format(
-        source_file=source_path,
-        functions_code=functions_code,
+    return (
+        _project_symbols_section(affected)
+        + _USER_TEMPLATE_FRESH.format(
+            source_file=source_path,
+            functions_code=functions_code,
+        )
     )
 
 
@@ -201,12 +216,15 @@ def user_prompt_incremental(
         else ""
     )
 
-    return _USER_TEMPLATE_INCREMENTAL.format(
-        source_file=source_path,
-        test_file=existing.test_file_path,
-        existing_content=trimmed_existing_content,
-        style_reference_section=style_reference_section,
-        functions_section=functions_section,
+    return (
+        _project_symbols_section(affected)
+        + _USER_TEMPLATE_INCREMENTAL.format(
+            source_file=source_path,
+            test_file=existing.test_file_path,
+            existing_content=trimmed_existing_content,
+            style_reference_section=style_reference_section,
+            functions_section=functions_section,
+        )
     )
 
 

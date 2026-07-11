@@ -118,18 +118,40 @@ class KotlinLanguageHandler:
             source_code, file_path, changed_lines
         )
 
-    def extract_class_signatures(self, source_code: str) -> str:
-        """Return a string containing class/data class/interface
-        signatures from the file (no method bodies).
+    def extract_class_signatures(
+        self,
+        source_code: str,
+        source_file_path: str | None = None,
+        repo_root: str | None = None,
+    ) -> str:
+        """Return class/data class/interface signatures from the file
+        (no bodies), PLUS — when the analyzer passes
+        source_file_path/repo_root — the resolved signatures of the
+        project classes this file imports.
 
         This is the v0.2.0a6.post4 fix for the "Claude hallucinates
-        constructor parameters" problem. Without this context, Claude
-        guessed at SalesforceService's constructor and wrote
-        ``SalesforceService(clientId=..., clientSecret=...)`` when the
-        real constructor takes ``(config, authenticator)``. With this
-        context, Claude sees the actual signature.
+        constructor parameters" problem, now extended across files: the
+        model sees not just THIS file's signatures but the real
+        constructor/method signatures of every project class it
+        imports, so it never guesses e.g. ``SalesforceService(clientId
+        =..., clientSecret=...)`` when the real ctor takes ``(config,
+        authenticator)``.
         """
-        return analyzer.extract_class_signatures(source_code)
+        own = analyzer.extract_class_signatures(source_code)
+        if not source_file_path or not repo_root:
+            return own
+        try:
+            from test_automator.languages.kotlin.import_resolver import (
+                resolve_imports_block,
+            )
+            imported = resolve_imports_block(
+                source_code, source_file_path, repo_root
+            )
+        except Exception:
+            imported = ""
+        if imported and own.strip():
+            return f"{own}\n\n{imported}"
+        return imported or own
 
     # --- Step 3: Test file discovery -------------------------------------
 

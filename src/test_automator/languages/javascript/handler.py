@@ -86,8 +86,34 @@ class JavaScriptLanguageHandler:
     ) -> list[AffectedFunction]:
         return analyzer.extract_affected(source_code, file_path, changed_lines)
 
-    def extract_class_signatures(self, source_code: str) -> str:
-        return analyzer.extract_class_signatures(source_code)
+    def extract_class_signatures(
+        self,
+        source_code: str,
+        source_file_path: str | None = None,
+        repo_root: str | None = None,
+    ) -> str:
+        """Local file's own signatures, plus — when the analyzer passes
+        source_file_path/repo_root — the resolved signatures of the
+        project modules this file imports, so the model uses real
+        exported names/params instead of guessing.
+        """
+        own = analyzer.extract_class_signatures(
+            source_code, file_path=source_file_path or "x.js"
+        )
+        if not source_file_path or not repo_root:
+            return own
+        try:
+            from test_automator.languages.javascript.import_resolver import (
+                resolve_imports_block,
+            )
+            imported = resolve_imports_block(
+                source_code, source_file_path, repo_root
+            )
+        except Exception:
+            imported = ""
+        if imported and own.strip():
+            return f"{own}\n\n{imported}"
+        return imported or own
 
     # --- Step 3: Test file discovery -------------------------------------
 

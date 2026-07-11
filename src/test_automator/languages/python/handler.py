@@ -37,6 +37,31 @@ class PythonLanguageHandler:
     ) -> list[AffectedFunction]:
         return analyzer.extract_affected(source_code, file_path, changed_lines)
 
+    def extract_class_signatures(
+        self,
+        source_code: str,
+        source_file_path: str | None = None,
+        repo_root: str | None = None,
+    ) -> str:
+        """Resolve the file's project-internal imports to their real
+        signatures from the codebase, so the model uses exact
+        names/params instead of guessing. Returns "" when nothing
+        resolves (e.g. only stdlib/third-party imports). The analyzer
+        passes source_file_path/repo_root because this signature
+        declares them.
+        """
+        if not source_file_path or not repo_root:
+            return ""
+        try:
+            from test_automator.languages.python.import_resolver import (
+                resolve_imports_block,
+            )
+            return resolve_imports_block(
+                source_code, source_file_path, repo_root
+            )
+        except Exception:
+            return ""
+
     # --- Step 3: Test file discovery -------------------------------------
 
     def __init__(self, test_dirs: list[str] | None = None) -> None:
