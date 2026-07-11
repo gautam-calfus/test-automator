@@ -31,6 +31,26 @@ def _find_git_root(start: str) -> str | None:
         return None
 
 
+def _parse_file_whitelist(raw: list[str] | None) -> list[str] | None:
+    """Flatten --file values into a de-duplicated path list.
+
+    ``--file`` is ``action="append"``, so ``raw`` is a list of the
+    strings given. Each may itself be a comma-separated list, so both
+    ``--file a --file b`` and ``--file a,b`` (and a mix) produce the
+    same result. Blank entries and surrounding whitespace are dropped;
+    order is preserved. Returns None when nothing usable was given.
+    """
+    if not raw:
+        return None
+    out: list[str] = []
+    for entry in raw:
+        for part in entry.split(","):
+            part = part.strip()
+            if part and part not in out:
+                out.append(part)
+    return out or None
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="test-automator",
@@ -198,13 +218,14 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         action="append",
         help=(
-            "Process ONLY the specified file (path relative to repo "
-            "root). Repeat --file to include multiple specific files. "
-            "Bypasses --java-file-filter (if you name a file, we assume "
-            "you want it tested). Useful for iterating on a single "
-            "failing test file without spending quota on unchanged "
-            "neighbors. Example: --file "
-            "src/main/java/com/acme/service/CMService.java"
+            "Process ONLY the specified file(s), path(s) relative to "
+            "repo root. Two ways to name several: repeat the flag "
+            "(--file a.java --file b.java) OR pass a comma-separated "
+            "list (--file a.java,b.java). The two can be combined. "
+            "Bypasses --java-file-filter (if you name files, we assume "
+            "you want them tested). Useful for scoping a run to a few "
+            "files without spending quota on unchanged neighbors. "
+            "Example: --file src/main/java/com/acme/service/CMService.java"
         ),
     )
     return p
@@ -299,7 +320,7 @@ def main(argv: list[str] | None = None) -> int:
         claude_code_max_output_tokens=args.max_output_tokens,
         test_runner_timeout=args.test_runner_timeout,
         java_file_filter=java_file_filter,
-        file_whitelist=(args.file if args.file else None),
+        file_whitelist=_parse_file_whitelist(args.file),
     )
 
     print(f"Running test-automator in {repo_path}")

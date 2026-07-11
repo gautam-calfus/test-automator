@@ -104,3 +104,31 @@ def test_path_normalization_handles_backslashes():
     ]
     result = orch._apply_file_whitelist(affected)
     assert len(result) == 1
+
+
+# --- --file accepts a LIST of files (repeated flag and/or comma-separated) ---
+
+from test_automator.cli import _parse_file_whitelist  # noqa: E402
+
+
+def test_file_list_via_repeated_flags():
+    # argparse action="append" gives one list entry per --file
+    assert _parse_file_whitelist(["a.java", "b.java"]) == ["a.java", "b.java"]
+
+
+def test_file_list_via_comma_separated():
+    assert _parse_file_whitelist(["a.java,b.java,c.java"]) == [
+        "a.java", "b.java", "c.java",
+    ]
+
+
+def test_file_list_mixed_and_deduped_and_trimmed():
+    assert _parse_file_whitelist(
+        ["a.java, b.java", "b.java", " c.java "]
+    ) == ["a.java", "b.java", "c.java"]
+
+
+def test_file_list_empty_is_none():
+    assert _parse_file_whitelist(None) is None
+    assert _parse_file_whitelist([]) is None
+    assert _parse_file_whitelist(["", " , "]) is None
