@@ -24,6 +24,56 @@ logger = get_logger(__name__)
 _TIMEOUT_SECONDS = 120  # legacy fallback; config.test_runner_timeout takes precedence
 
 
+def _summarize_runner_failure(output: str) -> str:
+    """Turn a wall of runner output into a one-line, human-readable
+    reason. Recognizes the common "tests errored before running" causes
+    so the log reads like a diagnosis, not a crash dump. Falls back to
+    the first meaningful error line, then to a generic note.
+    """
+    import re
+
+    # Reading a property off undefined/null — the classic React+Redux
+    # "store slice / prop not mocked" render failure.
+    m = re.search(
+        r"Cannot read propert(?:y|ies) of (undefined|null) "
+        r"\(reading '([^']+)'\)",
+        output,
+    )
+    if m:
+        return (
+            f"component threw while rendering — reads '{m.group(2)}' off "
+            f"{m.group(1)} (likely an unmocked store slice or prop). "
+            f"Handing to the fix loop."
+        )
+
+    patterns = [
+        (r"(\w+) is not a function",
+         "called something that isn't a function ({0}) — likely a "
+         "missing/incorrect mock. Handing to the fix loop."),
+        (r"Cannot find module '([^']+)'",
+         "import of '{0}' didn't resolve — wrong path or missing "
+         "dependency. Handing to the fix loop."),
+        (r"(SyntaxError: [^\n]+)",
+         "syntax error in the generated test ({0}). Handing to the "
+         "fix loop."),
+        (r"Test environment (jest-environment-\S+) cannot be found",
+         "missing test environment '{0}' — a project setup step, not "
+         "something the fix loop can install."),
+    ]
+    for rx, template in patterns:
+        m = re.search(rx, output)
+        if m:
+            return template.format(m.group(1))
+
+    # Fallback: first line that looks like an error.
+    for line in output.splitlines():
+        s = line.strip()
+        if any(k in s for k in ("Error", "error", "Exception", "FAIL")):
+            return (s[:180] + "…") if len(s) > 180 else s
+
+    return "tests produced no parseable summary (likely errored before running)."
+
+
 class TestRunner:
     """Writes generated test files, executes them, parses results."""
 
@@ -221,10 +271,21 @@ class TestRunner:
             )
             combined = proc.stdout + proc.stderr
             if "passed" not in combined and "failed" not in combined:
+                # No parseable summary usually means the tests errored
+                # before running (a render/import/compile error) — an
+                # intermediate state the fix loop typically recovers
+                # from. Log a concise one-line reason instead of dumping
+                # a scary multi-frame stack trace; keep the full output
+                # at DEBUG for when it's actually needed.
                 logger.warning(
-                    "%s runner produced no test summary — output follows:\n%s",
+                    "%s: no test summary — %s",
                     handler.name,
-                    combined[:2000],
+                    _summarize_runner_failure(combined),
+                )
+                logger.debug(
+                    "%s full runner output:\n%s",
+                    handler.name,
+                    combined[:4000],
                 )
             return combined, proc.returncode
         except subprocess.TimeoutExpired as exc:
