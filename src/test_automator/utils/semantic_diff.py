@@ -10,24 +10,31 @@ normalized bodies lets us drop those.
 Safety rule: the normalization must never make two SEMANTICALLY
 different snippets look equal (that would drop a real change we should
 have tested). It only erases formatting the language ignores:
-- whitespace that sits next to punctuation/operators (Prettier's
-  ``(x)=>{`` vs ``(x) => {``) — but whitespace BETWEEN two word
-  characters is kept, so ``return x`` never collapses to ``returnx``;
+- whitespace next to punctuation/operators (``(x)=>{`` vs ``(x) => {``)
+  — but whitespace BETWEEN two word characters is kept, so ``return x``
+  never collapses to ``returnx``;
 - quote style (``"x"`` vs ``'x'``);
-- trailing ``;`` / ``,`` (optional in JS objects/arrays, no-op in
-  general).
+- statement terminators ``;`` and trailing commas before a closing
+  bracket — both non-semantic in the supported languages;
+- line breaks, for brace languages where they carry no meaning (so a
+  one-line body and its multi-line reformat compare equal).
 
-For indentation-significant languages (Python) leading indentation is
-preserved as part of each line, so a re-indent that changes control
-flow is NOT treated as formatting-only.
+For indentation-significant languages (Python) line breaks and leading
+indentation ARE preserved, so a re-indent that changes control flow is
+NOT treated as formatting-only.
 """
 
 from __future__ import annotations
 
+import re
 
-def _collapse_line(s: str) -> str:
-    """Normalize a single already-stripped line."""
-    s = s.replace('"', "'")  # unify quote style
+_TRAILING_COMMA_RE = re.compile(r",(?=\s*[)\]}])")
+
+
+def _collapse_ws_and_quotes(s: str) -> str:
+    """Unify quotes and drop whitespace that sits next to punctuation,
+    keeping a single space only between two word characters."""
+    s = s.replace('"', "'")
     out: list[str] = []
     for i, ch in enumerate(s):
         if ch.isspace():
@@ -35,40 +42,41 @@ def _collapse_line(s: str) -> str:
             nxt = s[i + 1] if i + 1 < len(s) else ""
             prev_word = prev.isalnum() or prev == "_"
             next_word = nxt.isalnum() or nxt == "_"
-            # Keep a single space ONLY between two word characters
-            # (preserves ``return x``, ``else if``, Python keywords).
             if prev_word and next_word and prev != " ":
                 out.append(" ")
-            # otherwise the whitespace is insignificant → drop it
+            # else: whitespace adjacent to punctuation → insignificant
         else:
             out.append(ch)
-    result = "".join(out).strip()
-    # Trailing separators that formatters add/remove freely.
-    while result and result[-1] in ";,":
-        result = result[:-1]
-    return result
+    return "".join(out).strip()
 
 
 def normalize(code: str, indent_significant: bool = False) -> str:
     """Normalize a snippet for formatting-insensitive comparison.
 
-    ``indent_significant`` (Python) keeps each line's leading-indent
-    width so a semantic re-indent still registers as a change.
+    ``indent_significant`` (Python) keeps line structure and each
+    line's leading-indent width, so semantic re-indentation still
+    registers as a change. For brace languages, line breaks are
+    flattened away.
     """
-    lines_out: list[str] = []
+    units: list[str] = []
     for raw in code.splitlines():
         stripped = raw.strip()
         if not stripped:
             continue  # blank lines are never semantic
-        body = _collapse_line(stripped)
+        body = _collapse_ws_and_quotes(stripped)
         if not body:
             continue
         if indent_significant:
             indent = len(raw) - len(raw.lstrip())
-            lines_out.append(f"{indent}:{body}")
+            units.append(f"{indent}:{body}")
         else:
-            lines_out.append(body)
-    return "\n".join(lines_out)
+            units.append(body)
+
+    joined = "\n".join(units) if indent_significant else "".join(units)
+    # Statement terminators and trailing commas are non-semantic.
+    joined = joined.replace(";", "")
+    joined = _TRAILING_COMMA_RE.sub("", joined)
+    return joined
 
 
 def only_formatting_changed(

@@ -38,6 +38,20 @@ def test_prettier_style_reformat_is_formatting_only():
     assert only_formatting_changed(base, current) is True
 
 
+def test_reformat_that_changes_line_count_is_formatting_only():
+    # One-line body reformatted to multi-line (braces on own lines):
+    # line breaks are not semantic in brace languages.
+    base = "int add(int a,int b){return a+b;}"
+    current = "int add(int a, int b) {\n    return a + b;\n}"
+    assert only_formatting_changed(base, current) is True
+
+
+def test_trailing_comma_and_semicolon_are_ignored():
+    base = "const a = [1,2,3]"
+    current = "const a = [1, 2, 3,];"
+    assert only_formatting_changed(base, current) is True
+
+
 def test_real_logic_change_is_not_formatting_only():
     base = "const f = (x) => x + 1;"
     current = "const f = (x) => x - 1;"
