@@ -26,6 +26,10 @@ class PythonLanguageHandler:
 
     name = "python"
     source_extensions = (".py",)
+    # Indentation is semantic in Python, so the formatting-only change
+    # detector must keep leading-indent when comparing function bodies
+    # (a re-indent can change control flow).
+    indent_significant = True
 
     # --- Step 2: Code analysis -------------------------------------------
 

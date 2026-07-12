@@ -17,6 +17,7 @@ from test_automator.utils.diff_parser import (
     extract_diff_hunk_for_range,
     parse_changed_lines,
 )
+from test_automator.utils.semantic_diff import only_formatting_changed
 
 logger = get_logger(__name__)
 
@@ -160,6 +161,18 @@ class CodeAnalyzer:
             source, pr_file.filename, changed_lines
         )
 
+        # Drop functions whose lines the diff touched but whose behavior
+        # DIDN'T actually change — i.e. a formatter (Prettier/Black/
+        # ktlint) reblocked the region, so git marks every line changed
+        # and every function in it looks "affected". Comparing each
+        # function's body against its base-version body (ignoring
+        # formatting) removes those, so we don't waste LLM calls on
+        # logic that's identical. Only possible when we have the base
+        # content (modified files, non-committed-only mode).
+        affected = self._drop_formatting_only(
+            handler, pr_file, source, affected
+        )
+
         # Enrich each AffectedFunction with the specific diff hunk that
         # falls within its line range. The fresh/incremental prompts use
         # this to tell Claude what specifically changed, so generated
@@ -205,6 +218,64 @@ class CodeAnalyzer:
                     fn.class_context = class_context
 
         return affected
+
+    def _drop_formatting_only(
+        self, handler, pr_file: PRFile, source: str, affected: list
+    ) -> list:
+        """Remove affected functions whose body is unchanged from the
+        base version modulo formatting (whitespace/quotes/trailing
+        punctuation). Conservative: if the base can't be parsed, or a
+        function name is ambiguous in the base (appears more than once),
+        or the base version isn't found, the function is KEPT — we never
+        drop something that might be a real change.
+        """
+        base_content = getattr(pr_file, "base_content", None)
+        if not base_content or not affected:
+            return affected
+
+        try:
+            all_lines = set(range(1, base_content.count("\n") + 2))
+            base_funcs = handler.extract_affected(
+                base_content, pr_file.filename, all_lines
+            )
+        except Exception:
+            return affected
+
+        # name -> base source, but only for names that are UNAMBIGUOUS
+        # in the base (a duplicated name can't be matched safely).
+        by_name: dict[str, str] = {}
+        dupes: set[str] = set()
+        for bf in base_funcs:
+            if bf.name in by_name:
+                dupes.add(bf.name)
+            by_name[bf.name] = bf.source_code
+        for d in dupes:
+            by_name.pop(d, None)
+
+        indent_significant = bool(
+            getattr(handler, "indent_significant", False)
+        )
+
+        kept: list = []
+        skipped: list[str] = []
+        for fn in affected:
+            base_src = by_name.get(fn.name)
+            if base_src is not None and only_formatting_changed(
+                base_src, fn.source_code, indent_significant
+            ):
+                skipped.append(fn.name)
+            else:
+                kept.append(fn)
+
+        if skipped:
+            logger.info(
+                "skipping %d function(s) changed only by formatting "
+                "(no behavior change) | file=%s | skipped=%s",
+                len(skipped),
+                pr_file.filename,
+                skipped,
+            )
+        return kept
 
     def _read_source(self, filename: str) -> str | None:
         full_path = os.path.join(self._config.repo_path, filename)
