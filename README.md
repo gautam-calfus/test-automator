@@ -153,7 +153,7 @@ The commit message includes the pytest results, so reviewers see pass/fail count
 | `--llm-cmd` | (provider default) | Override the CLI binary; for `custom`, the full command to run |
 | `--claude-code-cmd` | `claude` | Override if your Claude Code binary is named differently |
 | `--claude-code-timeout` / `--llm-timeout` | `180` | Seconds to wait for each LLM CLI response |
-| `--max-output-tokens` | `64000` | Output-token cap per Claude Code call (`CLAUDE_CODE_MAX_OUTPUT_TOKENS`) |
+| `--max-output-tokens` | `16000` | Output-token cap per Claude Code call — the main quota lever (`CLAUDE_CODE_MAX_OUTPUT_TOKENS`) |
 | `--java-file-filter` | (all) | Java: only generate for `services`, `controllers`, `daos`, `handlers` |
 | `--file` | (all changed) | Only process the named file(s). Repeat the flag or pass a comma-separated list (`--file a,b`) |
 

@@ -183,12 +183,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--max-output-tokens",
         type=int,
-        default=64_000,
+        default=16_000,
         help=(
             "Output-token cap for each Claude Code call, applied via the "
-            "CLAUDE_CODE_MAX_OUTPUT_TOKENS env var (default: 64000; Claude "
-            "Code's own 32000 default is too low for large generated test "
-            "files). A value already set in your environment wins."
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS env var (default: 16000). This "
+            "is the main token/quota lever: output tokens dominate the "
+            "subscription session limit, so an uncapped generation can "
+            "run for many minutes and burn the quota. 16000 is ample for "
+            "one test file; raise it only for an unusually large file. A "
+            "value already set in your environment wins."
         ),
     )
     p.add_argument(

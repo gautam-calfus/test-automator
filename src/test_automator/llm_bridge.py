@@ -207,7 +207,7 @@ class ClaudeCodeBridge(_CliBridge):
         self,
         cmd: str = "claude",
         timeout: int = 180,
-        max_output_tokens: int = 64_000,
+        max_output_tokens: int = 16_000,
     ) -> None:
         self._max_output_tokens = max_output_tokens
         super().__init__(cmd=cmd, timeout=timeout)
@@ -350,7 +350,7 @@ def create_bridge(
     provider: str = "claude",
     cmd: str | None = None,
     timeout: int = 180,
-    max_output_tokens: int = 64_000,
+    max_output_tokens: int = 16_000,
 ) -> LLMBridge:
     """Build the right bridge for ``provider``.
 

@@ -16,7 +16,17 @@ DEFAULT_MAX_FIX_RETRIES = 3
 DEFAULT_MAX_FUNCTIONS_PER_FILE = 0
 DEFAULT_CLAUDE_CODE_CMD = "claude"
 DEFAULT_CLAUDE_CODE_TIMEOUT = 180
-DEFAULT_MAX_OUTPUT_TOKENS = 64_000
+# Output-token cap per LLM call. This is the dominant token/quota
+# sink: on a subscription the rolling session limit is driven mostly
+# by OUTPUT tokens, and an uncapped generation for a verbose React
+# component would run for 10-15 min emitting tens of thousands of
+# tokens — a handful of those exhaust the session before a run
+# finishes. One test file realistically needs a few thousand tokens;
+# 16K leaves generous headroom while bounding worst-case spend and
+# per-call time. Batching (>4 functions/file) already splits large
+# files across calls, so this rarely truncates. Raise with
+# --max-output-tokens for an unusually large single file.
+DEFAULT_MAX_OUTPUT_TOKENS = 16_000
 DEFAULT_TEST_RUNNER_TIMEOUT = 600
 
 
@@ -96,9 +106,9 @@ class LocalTestConfig:
     claude_code_timeout: int = DEFAULT_CLAUDE_CODE_TIMEOUT
     claude_code_max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
     """Output-token cap per Claude Code call, applied via the
-    CLAUDE_CODE_MAX_OUTPUT_TOKENS env var. Claude Code's own default
-    (32K) is too low for a full test file covering several changed
-    methods. A value already set in the environment wins.
+    CLAUDE_CODE_MAX_OUTPUT_TOKENS env var. The dominant token/quota
+    lever — see DEFAULT_MAX_OUTPUT_TOKENS. A value already set in the
+    environment wins.
     """
     test_runner_timeout: int = DEFAULT_TEST_RUNNER_TIMEOUT
     bot_name: str = DEFAULT_BOT_NAME

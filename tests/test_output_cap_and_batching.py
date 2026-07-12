@@ -2,7 +2,7 @@
 
 1. **Output-token cap**: Claude Code caps responses at 32K output
    tokens by default. Large generated test files exceed that. The
-   bridge now sets CLAUDE_CODE_MAX_OUTPUT_TOKENS (default 64000) on
+   bridge now sets CLAUDE_CODE_MAX_OUTPUT_TOKENS (default 16000) on
    the subprocess env, unless the user already set it.
 
 2. **Batched generation**: QuestionRoutingService had 7 changed
@@ -49,7 +49,7 @@ def test_bridge_sets_max_output_tokens_env(monkeypatch):
     bridge = ClaudeCodeBridge(cmd="echo", timeout=5)
     bridge.generate("system", "user")
 
-    assert captured["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "64000"
+    assert captured["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "16000"
 
 
 def test_bridge_respects_user_env_value(monkeypatch):
@@ -76,7 +76,7 @@ def test_bridge_custom_cap(monkeypatch):
 
 def test_config_wires_max_output_tokens():
     config = LocalTestConfig(repo_path="/tmp/x")
-    assert config.claude_code_max_output_tokens == 64_000
+    assert config.claude_code_max_output_tokens == 16_000
 
 
 # ---------------------------------------------------------------------------
