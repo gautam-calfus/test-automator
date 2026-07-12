@@ -248,6 +248,8 @@ def _print_summary(result: PipelineResult) -> None:
         print(f"  Tests passed       : {r.passed}")
         print(f"  Tests failed       : {r.failed}")
         print(f"  Tests errored      : {r.errors}")
+    if result.llm_usage:
+        print(f"  LLM usage          : {result.llm_usage}")
     if result.commit_sha:
         print(f"  Commit SHA         : {result.commit_sha}")
     if result.pr_url:

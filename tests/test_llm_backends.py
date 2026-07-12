@@ -155,3 +155,17 @@ def test_calls_made_counter_increments(captured):
     bridge.generate("s", "u")
     bridge.generate("s", "u")
     assert bridge.calls_made == 2
+
+
+def test_usage_summary_tracks_calls_and_tokens(monkeypatch):
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, stdout="x" * 400, stderr="")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    bridge = CopilotCliBridge(cmd="echo", timeout=5)
+    assert "0 LLM call" in bridge.usage_summary()
+    bridge.generate("s" * 800, "u" * 800)  # ~1600 input chars, 400 output
+    summary = bridge.usage_summary()
+    assert "1 LLM call" in summary
+    # ~400 input tokens (1600/4) + ~100 output tokens (400/4)
+    assert "prompt" in summary and "response" in summary

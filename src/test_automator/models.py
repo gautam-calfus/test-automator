@@ -117,3 +117,4 @@ class PipelineResult(BaseModel):
     pr_url: str | None = None
     steps: list[StepOutcome] = []
     is_passing: bool = False
+    llm_usage: str = ""

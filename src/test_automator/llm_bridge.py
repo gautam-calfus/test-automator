@@ -105,11 +105,29 @@ class _CliBridge:
     def __init__(self, cmd: str, timeout: int = 180) -> None:
         self._cmd = cmd
         self._timeout = timeout
-        # Running count of LLM invocations this process, surfaced in
-        # per-file progress logs so the user can see how fast a run is
-        # spending its quota.
+        # Running usage counters, surfaced in per-file progress logs so
+        # the developer can see how fast a run is spending quota and
+        # decide to stop (completed passing files are already on disk).
+        # The subscription CLI exposes no queryable "remaining" quota,
+        # so cumulative usage-so-far is the actionable signal.
         self.calls_made = 0
+        self._input_chars = 0
+        self._output_chars = 0
         self._verify_available()
+
+    def usage_summary(self) -> str:
+        """One-line cumulative usage: calls + rough token estimate
+        (~4 chars/token, split into prompt vs response)."""
+        in_tok = self._input_chars // 4
+        out_tok = self._output_chars // 4
+
+        def k(n: int) -> str:
+            return f"{n / 1000:.0f}k" if n >= 1000 else str(n)
+
+        return (
+            f"{self.calls_made} LLM call(s), ~{k(in_tok + out_tok)} tokens "
+            f"(prompt ~{k(in_tok)} / response ~{k(out_tok)})"
+        )
 
     # -- hooks ---------------------------------------------------------
 
@@ -140,6 +158,7 @@ class _CliBridge:
 
     def generate(self, system_prompt: str, user_prompt: str) -> str:
         self.calls_made += 1
+        self._input_chars += len(system_prompt) + len(user_prompt)
         logger.info(
             "invoking %s cli",
             self.provider,
@@ -191,6 +210,7 @@ class _CliBridge:
                 f"stderr: {proc.stderr[:500]}"
             )
 
+        self._output_chars += len(proc.stdout)
         return proc.stdout
 
 

@@ -301,13 +301,28 @@ class LocalTestPipeline:
                         "not saved as final",
                         gen.test_file_path,
                     )
+                # Usage readout after each file so the developer can
+                # judge quota burn and stop whenever they like — every
+                # passing file so far is already saved to disk, so
+                # aborting (Ctrl-C) never loses completed work.
+                usage = getattr(self._llm, "usage_summary", None)
+                if callable(usage):
+                    logger.info(
+                        "    ⧗ usage so far: %s | %d/%d files done, "
+                        "completed tests saved — safe to stop (Ctrl-C) "
+                        "anytime",
+                        usage(),
+                        idx,
+                        total,
+                    )
         except LLMSessionLimitError as exc:
-            passed_files = [t.test_file_path for t in tests if True]
+            passed_files = [t.test_file_path for t in tests]
+            usage = getattr(self._llm, "usage_summary", None)
             logger.warning(
-                "ABORTING run — LLM session/usage limit reached after "
-                "%s call(s). %d file(s) already generated; passing ones "
-                "are saved to disk. %s",
-                getattr(self._llm, "calls_made", "?"),
+                "ABORTING run — LLM session/usage limit reached (%s). "
+                "%d file(s) already generated; passing ones are saved "
+                "to disk. %s",
+                usage() if callable(usage) else "usage unknown",
                 len(tests),
                 exc,
             )
@@ -489,5 +504,10 @@ class LocalTestPipeline:
                 all_steps_ok
                 and test_result is not None
                 and test_result.is_passing
+            ),
+            llm_usage=(
+                self._llm.usage_summary()
+                if hasattr(self._llm, "usage_summary")
+                else ""
             ),
         )
