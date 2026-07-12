@@ -169,3 +169,68 @@ def test_usage_summary_tracks_calls_and_tokens(monkeypatch):
     assert "1 LLM call" in summary
     # ~400 input tokens (1600/4) + ~100 output tokens (400/4)
     assert "prompt" in summary and "response" in summary
+
+
+def test_claude_json_output_yields_real_tokens_and_cost(monkeypatch):
+    import json as _json
+    from test_automator.llm_bridge import ClaudeCodeBridge
+
+    payload = _json.dumps({
+        "result": "def test_x():\n    assert True\n",
+        "usage": {
+            "input_tokens": 10,
+            "cache_creation_input_tokens": 4000,
+            "cache_read_input_tokens": 2000,
+            "output_tokens": 500,
+        },
+        "total_cost_usd": 0.0157,
+        "is_error": False,
+    })
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, stdout=payload, stderr="")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    bridge = ClaudeCodeBridge(cmd="echo", timeout=5)
+    text = bridge.generate("sys", "user")
+    assert text == "def test_x():\n    assert True\n"  # unwrapped result
+
+    summary = bridge.usage_summary()
+    assert "$0.0157" in summary
+    assert "out tokens" in summary
+    assert "estimated" not in summary  # real figures, not the fallback
+
+
+def test_claude_falls_back_to_text_when_not_json(monkeypatch):
+    from test_automator.llm_bridge import ClaudeCodeBridge
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="plain non-json text", stderr=""
+        )
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    bridge = ClaudeCodeBridge(cmd="echo", timeout=5)
+    assert bridge.generate("s", "u") == "plain non-json text"
+    # no real usage → estimate summary
+    assert "estimated" in bridge.usage_summary()
+
+
+def test_json_in_band_session_limit_aborts(monkeypatch):
+    import json as _json
+    from test_automator.llm_bridge import ClaudeCodeBridge
+    from test_automator.utils.exceptions import LLMSessionLimitError
+
+    payload = _json.dumps({
+        "result": "You've hit your session limit · resets 3:40pm",
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+        "is_error": True,
+    })
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, stdout=payload, stderr="")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    bridge = ClaudeCodeBridge(cmd="echo", timeout=5)
+    with pytest.raises(LLMSessionLimitError):
+        bridge.generate("s", "u")

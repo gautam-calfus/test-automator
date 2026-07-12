@@ -43,6 +43,7 @@ markdown fences and prose regardless of which model produced the output.
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import shutil
@@ -113,21 +114,47 @@ class _CliBridge:
         self.calls_made = 0
         self._input_chars = 0
         self._output_chars = 0
+        # Accurate figures when the CLI reports them (Claude's JSON
+        # output does); otherwise we fall back to the char estimate.
+        self._have_real_usage = False
+        self._real_input_tokens = 0
+        self._real_output_tokens = 0
+        self._cost_usd = 0.0
         self._verify_available()
 
+    @staticmethod
+    def _k(n: float) -> str:
+        return f"{n / 1000:.0f}k" if n >= 1000 else str(int(n))
+
     def usage_summary(self) -> str:
-        """One-line cumulative usage: calls + rough token estimate
-        (~4 chars/token, split into prompt vs response)."""
+        """One-line cumulative usage for this run.
+
+        Uses ACCURATE tokens + real USD cost when the CLI reports them
+        (Claude's ``--output-format json``); otherwise a rough estimate
+        (~4 chars/token). No CLI exposes the account's remaining
+        session/weekly quota headlessly, so this is consumption
+        so-far — the actionable signal for deciding to stop.
+        """
+        if self._have_real_usage:
+            return (
+                f"{self.calls_made} LLM call(s), "
+                f"{self._k(self._real_input_tokens)} in + "
+                f"{self._k(self._real_output_tokens)} out tokens, "
+                f"${self._cost_usd:.4f} this run"
+            )
         in_tok = self._input_chars // 4
         out_tok = self._output_chars // 4
-
-        def k(n: int) -> str:
-            return f"{n / 1000:.0f}k" if n >= 1000 else str(n)
-
         return (
-            f"{self.calls_made} LLM call(s), ~{k(in_tok + out_tok)} tokens "
-            f"(prompt ~{k(in_tok)} / response ~{k(out_tok)})"
+            f"{self.calls_made} LLM call(s), ~{self._k(in_tok + out_tok)} "
+            f"tokens (prompt ~{self._k(in_tok)} / response "
+            f"~{self._k(out_tok)}, estimated)"
         )
+
+    def _parse_response(self, stdout: str) -> tuple[str, dict | None]:
+        """Return ``(text, usage)``. Base bridges emit plain text and
+        report no usage; subclasses (Claude JSON) override to extract
+        the response text plus accurate token/cost figures."""
+        return stdout, None
 
     # -- hooks ---------------------------------------------------------
 
@@ -210,8 +237,26 @@ class _CliBridge:
                 f"stderr: {proc.stderr[:500]}"
             )
 
-        self._output_chars += len(proc.stdout)
-        return proc.stdout
+        text, usage = self._parse_response(proc.stdout)
+
+        # An in-band session-limit signal (JSON output can report the
+        # limit with a zero exit code) must abort just like the
+        # nonzero-exit case handled above.
+        if usage and usage.get("is_error") and _is_session_limit(text):
+            raise LLMSessionLimitError(
+                f"{self.provider} CLI usage/session limit reached — "
+                f"aborting. Passing tests already generated are kept. "
+                f"Detail: {text.strip()[:200]}"
+            )
+
+        if usage is not None:
+            self._have_real_usage = True
+            self._real_input_tokens += int(usage.get("input_tokens", 0))
+            self._real_output_tokens += int(usage.get("output_tokens", 0))
+            self._cost_usd += float(usage.get("cost_usd", 0.0) or 0.0)
+        else:
+            self._output_chars += len(text)
+        return text
 
 
 class ClaudeCodeBridge(_CliBridge):
@@ -233,15 +278,46 @@ class ClaudeCodeBridge(_CliBridge):
         super().__init__(cmd=cmd, timeout=timeout)
 
     def _argv(self, system_prompt: str, user_prompt: str) -> list[str]:
+        # JSON output (vs plain text) so we get accurate per-call token
+        # counts and real USD cost alongside the response, surfaced in
+        # the per-file usage readout. _parse_response unwraps it.
         return [
             self._cmd,
             "--print",
-            "--output-format", "text",
+            "--output-format", "json",
             "--tools", "",
             "--system-prompt", system_prompt,
             "--permission-mode", "bypassPermissions",
             user_prompt,
         ]
+
+    def _parse_response(self, stdout: str) -> tuple[str, dict | None]:
+        """Unwrap Claude Code's JSON envelope into (response_text,
+        usage). Falls back to treating stdout as plain text if it isn't
+        JSON (older CLI, or a non-JSON error), so the bridge keeps
+        working either way.
+        """
+        try:
+            data = json.loads(stdout)
+        except (json.JSONDecodeError, ValueError):
+            return stdout, None
+        if not isinstance(data, dict):
+            return stdout, None
+        text = data.get("result") or ""
+        u = data.get("usage") or {}
+        # Cost already reflects true billing (incl. cache). Input token
+        # figure sums fresh + cache tokens for an honest "consumed" view.
+        usage = {
+            "input_tokens": (
+                int(u.get("input_tokens", 0) or 0)
+                + int(u.get("cache_creation_input_tokens", 0) or 0)
+                + int(u.get("cache_read_input_tokens", 0) or 0)
+            ),
+            "output_tokens": int(u.get("output_tokens", 0) or 0),
+            "cost_usd": data.get("total_cost_usd", 0.0) or 0.0,
+            "is_error": bool(data.get("is_error")),
+        }
+        return text, usage
 
     def _env(self) -> dict[str, str]:
         # Claude Code caps responses at 32K output tokens by default.
