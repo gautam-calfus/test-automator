@@ -143,6 +143,33 @@ class PythonLanguageHandler:
     ) -> str:
         return prompts.user_prompt_fix(generated, pytest_output)
 
+    # --- LLM output extraction -------------------------------------------
+
+    def extract_code(self, raw: str, mode: str) -> str:
+        """Pull Python out of the LLM response and VALIDATE it parses.
+
+        The generic markdown extractor happily returns prose or a
+        truncated fragment as "code"; a malformed/garbled response then
+        gets written and blows up only at pytest time. Parsing with
+        ``ast`` here turns that into a clean extraction failure, which
+        the generator retries once before giving up — so a single bad
+        (e.g. truncated) response doesn't cost the whole file.
+        """
+        import ast
+
+        from test_automator.utils.diff_parser import extract_code_block
+
+        code = extract_code_block(raw)
+        if not code or not code.strip():
+            raise ValueError("no Python code found in LLM response")
+        try:
+            ast.parse(code)
+        except SyntaxError as exc:
+            raise ValueError(
+                f"extracted Python does not parse: {exc}"
+            ) from exc
+        return code
+
     # --- Step 3 & 4 helpers ----------------------------------------------
 
     def parse_existing_tests(self, content: str) -> list:

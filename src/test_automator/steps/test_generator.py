@@ -17,6 +17,10 @@ from test_automator.models import (
     GeneratedTest,
     RemovedFunction,
 )
+from test_automator.steps.example_finder import (
+    ExampleFinder,
+    format_example_block,
+)
 from test_automator.steps.test_finder import TestFinder
 from test_automator.utils import gen_cache
 from test_automator.utils.diff_parser import extract_code_block
@@ -91,6 +95,7 @@ class TestGenerator:
         self._config = config
         self._test_finder = test_finder
         self._llm = llm
+        self._example_finder = ExampleFinder(config)
 
     def generate(
         self,
@@ -363,19 +368,16 @@ class TestGenerator:
                 f"in this release. Affected file: {source_path}. {exc}"
             ) from exc
 
-        try:
-            raw = self._llm.generate(system_prompt, user_prompt)
-        except LLMSessionLimitError:
-            # Quota exhausted — let it propagate so the whole run
-            # aborts instead of being swallowed as a per-file failure
-            # and firing more doomed calls.
-            raise
-        except Exception as exc:
-            raise TestGeneratorError(
-                f"LLM failed for {source_path}: {exc}"
-            ) from exc
+        # Few-shot: show the model a real existing test from this repo so
+        # it mirrors the project's actual harness (providers, custom
+        # render, fixtures, base test classes) instead of guessing one.
+        example_block = self._example_block(handler, source_path)
+        if example_block:
+            user_prompt = example_block + user_prompt
 
-        code = _extract_code(handler, raw, mode="fresh", source_path=source_path)
+        code = self._generate_and_extract(
+            handler, system_prompt, user_prompt, source_path, mode="fresh"
+        )
         test_path = self._test_finder.suggest_test_path(
             source_path, existing=None
         )
@@ -386,6 +388,64 @@ class TestGenerator:
             content=code,
             covered_functions=[fn.qualified_name for fn in functions],
         )
+
+    def _generate_and_extract(
+        self,
+        handler: LanguageHandler,
+        system_prompt: str,
+        user_prompt: str,
+        source_path: str,
+        mode: str,
+    ) -> str:
+        """Call the LLM and extract code, retrying ONCE if the response
+        has no recognizable code.
+
+        The 15-minute garbled ``e(true);`` response is the case this
+        guards: rather than abandon the whole file after one bad
+        (possibly truncated) response, regenerate once. Session-limit
+        errors still propagate immediately (no point retrying).
+        """
+        last_exc: Exception | None = None
+        for attempt in (1, 2):
+            try:
+                raw = self._llm.generate(system_prompt, user_prompt)
+            except LLMSessionLimitError:
+                raise
+            except Exception as exc:
+                raise TestGeneratorError(
+                    f"LLM failed for {source_path}: {exc}"
+                ) from exc
+            try:
+                code = _extract_code(
+                    handler, raw, mode=mode, source_path=source_path
+                )
+                if not code or not code.strip():
+                    raise TestGeneratorError(
+                        f"LLM returned an empty test body for {source_path}"
+                    )
+                return code
+            except TestGeneratorError as exc:
+                last_exc = exc
+                if attempt == 1:
+                    logger.warning(
+                        "unusable LLM response for %s (no recognizable "
+                        "code) — regenerating once. Detail: %s",
+                        source_path, exc,
+                    )
+        raise last_exc  # type: ignore[misc]
+
+    def _example_block(self, handler: LanguageHandler, source_path: str) -> str:
+        try:
+            exclude = set(handler.candidate_test_paths(source_path))
+        except Exception:
+            exclude = set()
+        try:
+            example = self._example_finder.find_example(
+                handler, source_path, exclude_paths=exclude
+            )
+            return format_example_block(example)
+        except Exception:
+            return ""
 
     def _generate_incremental(
         self,
@@ -444,20 +504,9 @@ class TestGenerator:
                 f"in this release. {exc}"
             ) from exc
 
-        try:
-            raw = self._llm.generate(system_prompt, user_prompt)
-        except LLMSessionLimitError:
-            # Quota exhausted — let it propagate so the whole run
-            # aborts instead of being swallowed as a per-file failure
-            # and firing more doomed calls.
-            raise
-        except Exception as exc:
-            raise TestGeneratorError(
-                f"LLM failed for {source_path}: {exc}"
-            ) from exc
-
-        new_test_code = _extract_code(
-            handler, raw, mode="incremental", source_path=source_path
+        new_test_code = self._generate_and_extract(
+            handler, system_prompt, user_prompt, source_path,
+            mode="incremental",
         ).strip()
         merged = handler.merge_new_tests(trimmed_existing, new_test_code)
 
