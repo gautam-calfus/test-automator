@@ -424,6 +424,11 @@ class JavaLanguageHandler:
     def collection_error_markers(self) -> tuple[str, ...]:
         return runner.collection_error_markers()
 
+    def check_tests_compile(
+        self, repo_path: str, timeout: int = 600
+    ) -> tuple[bool | None, str]:
+        return runner.check_tests_compile(repo_path, timeout)
+
     # --- Step 4 & 6: LLM prompts -----------------------------------------
 
     def system_prompt_fresh(self) -> str:

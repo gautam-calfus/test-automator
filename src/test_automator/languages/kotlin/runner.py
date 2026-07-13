@@ -87,6 +87,40 @@ _CLASS_DECL_RE = re.compile(
 )
 
 
+def check_tests_compile(
+    repo_path: str, timeout: int = 600
+) -> tuple[bool | None, str]:
+    """Compile the EXISTING test source set (before we generate
+    anything). Kotlin compiles all test files together, so one
+    pre-existing broken test fails the whole task — which would make
+    every file the tool processes report errors=1 even when its own
+    generated test is fine. Returns:
+
+    - ``(True, output)``  — tests compile;
+    - ``(False, output)`` — compile FAILED (output has the errors);
+    - ``(None, "")``      — couldn't determine (no gradlew) → skip check.
+    """
+    import os
+    import subprocess
+
+    gradlew = os.path.join(repo_path, "gradlew")
+    if not os.path.isfile(gradlew):
+        return None, ""
+    try:
+        proc = subprocess.run(
+            ["./gradlew", "compileTestKotlin", "--console=plain", "-q"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None, ""
+    out = proc.stdout + proc.stderr
+    return (proc.returncode == 0), out
+
+
 def _fqn_for_test_file(test_file_path: str) -> str:
     """Fully-qualified class name to pass to Gradle ``--tests``.
 

@@ -6,6 +6,7 @@ from typing import Any, Callable
 
 from test_automator._logging import get_logger
 from test_automator.config import LocalTestConfig
+from test_automator.languages import get_handler_for_file
 from test_automator.llm_bridge import LLMBridge, create_bridge
 from test_automator.models import (
     AffectedFunction,
@@ -163,6 +164,24 @@ class LocalTestPipeline:
         )
         steps.append(step3)
 
+        # Pre-flight: if the repo's EXISTING test suite already fails to
+        # compile, abort now with the errors instead of burning tokens.
+        # Kotlin/Java compile all tests together, so one broken
+        # pre-existing test makes every file report errors=1 and the
+        # fix loop can never fix errors that live in other files.
+        preflight_msg = self._preflight_compile_check(affected + removed)
+        if preflight_msg is not None:
+            logger.error(preflight_msg)
+            steps.append(StepOutcome(
+                step="preflight_compile",
+                success=False,
+                message=preflight_msg,
+            ))
+            return self._build_result(
+                steps, tests, test_result, commit_sha, pr_url, files_changed,
+                pr_info.base_branch, pr_info.head_branch,
+            )
+
         # v0.2: generation, running, and fixing are interleaved PER
         # FILE — each generated file's tests run (and get fixed)
         # immediately, before the next file is generated. Feedback is
@@ -226,6 +245,50 @@ class LocalTestPipeline:
             steps, tests, test_result, commit_sha, pr_url, files_changed,
             pr_info.base_branch, pr_info.head_branch,
         )
+
+    def _preflight_compile_check(self, items: list) -> str | None:
+        """Compile the existing test suite once per involved language
+        (Kotlin/Java). Returns an actionable error message if any
+        already fails to compile, else None. Best-effort: languages
+        without the hook, or an indeterminate result, are skipped.
+        """
+        seen: set[str] = set()
+        timeout = getattr(self._config, "test_runner_timeout", 600)
+        for it in items:
+            handler = get_handler_for_file(getattr(it, "file_path", ""))
+            if handler is None or handler.name in seen:
+                continue
+            seen.add(handler.name)
+            check = getattr(handler, "check_tests_compile", None)
+            if not callable(check):
+                continue
+            logger.info(
+                "pre-flight: compiling existing %s test suite…",
+                handler.name,
+            )
+            try:
+                ok, output = check(self._config.repo_path, timeout)
+            except Exception:
+                continue
+            if ok is False:
+                errs = "\n".join(
+                    ln for ln in output.splitlines()
+                    if ln.strip().startswith("e:")
+                    or ": error:" in ln
+                    or "error:" in ln.lower()
+                )[:2000]
+                return (
+                    f"Your existing {handler.name} test suite does NOT "
+                    f"compile on this branch — aborting before spending "
+                    f"any LLM tokens.\n\n{handler.name.title()} compiles "
+                    f"all tests together, so these pre-existing errors "
+                    f"would make EVERY generated file report a build "
+                    f"error that the fix loop cannot repair (the errors "
+                    f"live in other files). Fix or stash the broken test "
+                    f"files, get the suite compiling, then re-run.\n\n"
+                    f"Compile errors:\n{errs or output[:2000]}"
+                )
+        return None
 
     def _generate_run_fix(
         self,

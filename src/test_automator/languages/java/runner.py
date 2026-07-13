@@ -361,6 +361,34 @@ def parse_test_results_xml(
     }
 
 
+def check_tests_compile(
+    repo_path: str, timeout: int = 600
+) -> tuple[bool | None, str]:
+    """Compile the EXISTING test sources before generating anything.
+    Java (like Kotlin) compiles all tests together, so one pre-existing
+    broken test fails the whole task and makes every processed file
+    report errors=1. Returns (True|False, output) or (None, "") when
+    the build tool can't be determined.
+    """
+    import subprocess
+
+    detected = detect_build_tool(repo_path)
+    if detected is None:
+        return None, ""
+    if detected.tool == "maven":
+        cmd = detected.command + ["test-compile", "-q"]
+    else:
+        cmd = detected.command + ["compileTestJava", "--console=plain", "-q"]
+    try:
+        proc = subprocess.run(
+            cmd, cwd=repo_path, capture_output=True, text=True,
+            timeout=timeout, check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None, ""
+    return (proc.returncode == 0), (proc.stdout + proc.stderr)
+
+
 def collection_error_markers() -> tuple[str, ...]:
     """Substrings indicating an ENVIRONMENT error (vs a fixable compile
     error). When these appear, the fix loop bails — Claude can't fix
