@@ -80,6 +80,11 @@ class LocalTestConfig:
     instead of aborting. Off by default — it mutates existing test
     files and spends tokens on code outside your diff. Set via
     --repair-existing."""
+    fetch_base: bool = True
+    """When the base branch is a remote ref (``origin/develop``), run
+    ``git fetch`` on it first so the diff reflects the LIVE remote
+    instead of a stale local cache. Set False via --no-fetch for
+    offline/deterministic runs."""
     committed_only: bool = False
     """When True, diff ``base...HEAD`` (committed changes only).
     Default False: diff the working tree against the merge-base with

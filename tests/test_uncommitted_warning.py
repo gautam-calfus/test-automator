@@ -203,3 +203,67 @@ def test_no_files_message_mentions_source_root_case() -> None:
     assert "no eligible source files changed" in src
     assert "case" in src.lower()  # mentions case sensitivity
     assert "committed" in src.lower()  # explains the diff mode
+
+
+# --- auto-fetch when base is a remote ref ---
+
+def test_auto_fetches_remote_base_ref(tmp_path, monkeypatch):
+    """--base-branch origin/develop should fetch first so the diff
+    reflects the live remote, not a stale local cache."""
+    import subprocess as sp
+    from test_automator.config import LocalTestConfig
+    from test_automator.steps.local_diff_reader import LocalDiffReader
+
+    # a bare 'remote' repo + a clone with an origin
+    remote = tmp_path / "remote.git"
+    sp.run(["git", "init", "--bare", "-b", "develop", str(remote)],
+           check=True, capture_output=True)
+    work = tmp_path / "work"
+    sp.run(["git", "clone", str(remote), str(work)], check=True,
+           capture_output=True)
+    for k, v in (("user.email", "t@t"), ("user.name", "T")):
+        sp.run(["git", "config", k, v], cwd=work, check=True,
+               capture_output=True)
+    (work / "a.py").write_text("def f():\n    return 1\n")
+    sp.run(["git", "add", "."], cwd=work, check=True, capture_output=True)
+    sp.run(["git", "commit", "-m", "init"], cwd=work, check=True,
+           capture_output=True)
+    sp.run(["git", "push", "origin", "develop"], cwd=work, check=True,
+           capture_output=True)
+    sp.run(["git", "checkout", "-b", "feature"], cwd=work, check=True,
+           capture_output=True)
+
+    calls = []
+    real_run = sp.run
+
+    def spy(cmd, *a, **k):
+        if cmd[:2] == ["git", "fetch"]:
+            calls.append(cmd)
+        return real_run(cmd, *a, **k)
+
+    monkeypatch.setattr(sp, "run", spy)
+
+    cfg = LocalTestConfig(repo_path=str(work), base_branch="origin/develop")
+    LocalDiffReader(cfg).read()
+    assert any(c[:2] == ["git", "fetch"] and "develop" in c for c in calls)
+
+
+def test_no_fetch_flag_skips_fetch(tmp_path, monkeypatch):
+    import subprocess as sp
+    from test_automator.config import LocalTestConfig
+    from test_automator.steps.local_diff_reader import LocalDiffReader
+
+    _init_repo_with_base_branch(str(tmp_path))  # local 'main' base
+    calls = []
+    real_run = sp.run
+
+    def spy(cmd, *a, **k):
+        if cmd[:2] == ["git", "fetch"]:
+            calls.append(cmd)
+        return real_run(cmd, *a, **k)
+    monkeypatch.setattr(sp, "run", spy)
+
+    # plain local base → never fetches regardless
+    cfg = LocalTestConfig(repo_path=str(tmp_path), base_branch="main")
+    LocalDiffReader(cfg).read()
+    assert calls == []

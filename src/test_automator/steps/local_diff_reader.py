@@ -37,6 +37,7 @@ class LocalDiffReader:
     def read(self) -> PRInfo:
         """Return changed source files since ``base_branch``."""
         self._verify_inside_repo()
+        self._maybe_fetch_base()
         self._verify_base_branch_exists()
         if self._committed_only():
             self._warn_if_working_tree_dirty()
@@ -94,6 +95,48 @@ class LocalDiffReader:
 
     def _committed_only(self) -> bool:
         return bool(getattr(self._config, "committed_only", False))
+
+    def _maybe_fetch_base(self) -> None:
+        """When the base branch is a remote-tracking ref (``origin/x``),
+        fetch it first so the diff reflects the LIVE remote, not a
+        stale local cache. ``origin/develop`` alone is only as fresh as
+        your last ``git fetch`` — this makes ``--base-branch
+        origin/develop`` behave the way people expect (check the remote).
+
+        Only fires for a ``<remote>/<branch>`` form where ``<remote>``
+        is a real git remote. Best-effort: a fetch failure (offline,
+        auth) logs a warning and we proceed with the cached ref.
+        Skipped when ``--no-fetch`` is set.
+        """
+        if not getattr(self._config, "fetch_base", True):
+            return
+        base = self._config.base_branch
+        if "/" not in base:
+            return  # a plain local branch — nothing to fetch
+        remote, _, branch = base.partition("/")
+        if not branch:
+            return
+        try:
+            remotes = self._git("remote", capture=True).split()
+        except DiffReaderError:
+            return
+        if remote not in remotes:
+            return  # not a remote ref (e.g. a local branch with a slash)
+        logger.info(
+            "fetching %s from remote %s so the diff reflects the live "
+            "remote…",
+            branch, remote,
+        )
+        try:
+            self._git("fetch", remote, branch)
+        except DiffReaderError as exc:
+            logger.warning(
+                "could not fetch %s/%s (%s) — proceeding with the cached "
+                "remote-tracking ref; pass --no-fetch to silence, or run "
+                "`git fetch %s %s` yourself.",
+                remote, branch, str(exc).splitlines()[0] if str(exc) else "",
+                remote, branch,
+            )
 
     def _note_uncommitted_changes_included(self) -> None:
         """Tell the user their uncommitted changes ARE being analyzed.

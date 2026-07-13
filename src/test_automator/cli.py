@@ -82,6 +82,16 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument(
+        "--no-fetch",
+        action="store_true",
+        help=(
+            "Don't auto-fetch when --base-branch is a remote ref "
+            "(origin/develop). By default such a base is fetched first "
+            "so the diff reflects the live remote, not a stale local "
+            "cache."
+        ),
+    )
+    p.add_argument(
         "--committed-only",
         action="store_true",
         help=(
@@ -335,6 +345,7 @@ def main(argv: list[str] | None = None) -> int:
         repo_path=repo_path,
         base_branch=args.base_branch,
         committed_only=args.committed_only,
+        fetch_base=not args.no_fetch,
         repair_existing=args.repair_existing,
         test_dirs=test_dirs,
         source_root=args.source_root,
