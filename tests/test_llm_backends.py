@@ -243,3 +243,43 @@ def test_json_in_band_session_limit_aborts(monkeypatch):
     bridge = ClaudeCodeBridge(cmd="echo", timeout=5)
     with pytest.raises(LLMSessionLimitError):
         bridge.generate("s", "u")
+
+
+def test_copilot_classic_pat_error_gives_clear_auth_hint(monkeypatch):
+    from test_automator.utils.exceptions import LLMBridgeError
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd, 1, stdout="",
+            stderr="Error: Classic Personal Access Tokens (ghp_) are "
+                   "not supported by Copilot.",
+        )
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    bridge = CopilotCliBridge(cmd="echo", timeout=5)
+    with pytest.raises(LLMBridgeError) as ei:
+        bridge.generate("s", "u")
+    msg = str(ei.value)
+    assert "could not authenticate" in msg
+    assert "GH_TOKEN" in msg          # names the likely culprit env var
+    assert "--llm claude" in msg      # offers the easy escape hatch
+
+
+def test_auth_error_not_confused_with_session_limit(monkeypatch):
+    from test_automator.utils.exceptions import (
+        LLMBridgeError,
+        LLMSessionLimitError,
+    )
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd, 1, stdout="", stderr="401 Unauthorized: invalid token"
+        )
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    bridge = CopilotCliBridge(cmd="echo", timeout=5)
+    with pytest.raises(LLMBridgeError) as ei:
+        bridge.generate("s", "u")
+    # auth error, not a session-limit abort
+    assert not isinstance(ei.value, LLMSessionLimitError)
+    assert "authenticate" in str(ei.value)

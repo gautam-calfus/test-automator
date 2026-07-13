@@ -77,6 +77,29 @@ def _is_session_limit(text: str) -> bool:
     return any(m in low for m in _SESSION_LIMIT_MARKERS)
 
 
+# Substrings that mean the CLI failed to AUTHENTICATE (bad/missing
+# token, not logged in) — a credential/env problem the user must fix,
+# distinct from a usage limit or a flag error.
+_AUTH_ERROR_MARKERS = (
+    "not supported by copilot",
+    "personal access token",
+    "not authenticated",
+    "authentication failed",
+    "unauthorized",
+    "401",
+    "not logged in",
+    "please log in",
+    "invalid token",
+    "no valid credentials",
+    "oauth token has expired",
+)
+
+
+def _is_auth_error(text: str) -> bool:
+    low = text.lower()
+    return any(m in low for m in _AUTH_ERROR_MARKERS)
+
+
 class LLMBridge(Protocol):
     """Interface for any LLM backend. Implement this to swap models."""
 
@@ -174,6 +197,13 @@ class _CliBridge:
             f"installed version may be too old or too new for this bridge."
         )
 
+    def _auth_error_hint(self, err: str) -> str:
+        return (
+            f"Re-authenticate the `{self._cmd}` CLI (run it once "
+            f"interactively and complete its sign-in), or switch "
+            f"backend with --llm claude."
+        )
+
     # -- shared behavior -------------------------------------------------
 
     def _verify_available(self) -> None:
@@ -224,6 +254,13 @@ class _CliBridge:
                     f"aborting the run to avoid wasted calls. Tests "
                     f"already generated and passing are kept. Detail: "
                     f"{err.strip()[:200]}"
+                )
+            if _is_auth_error(err):
+                raise LLMBridgeError(
+                    f"{self.provider} CLI could not authenticate — this "
+                    f"is a credential/environment issue, not a "
+                    f"test-automator bug.\n{self._auth_error_hint(err)}\n"
+                    f"Underlying error: {err.strip()[:300]}"
                 )
             if "unknown option" in err.lower() or "unrecognized" in err.lower():
                 raise LLMBridgeError(
@@ -381,6 +418,19 @@ class CopilotCliBridge(_CliBridge):
             "  npm install -g @github/copilot\n"
             f"Then run `{self._cmd}` once to authenticate with GitHub."
         )
+
+    def _auth_error_hint(self, err: str) -> str:
+        hint = (
+            "GitHub Copilot does not accept classic personal access "
+            "tokens (ghp_…). If GH_TOKEN or GITHUB_TOKEN in your "
+            "environment holds a classic PAT, unset it and sign in "
+            "interactively:\n"
+            "  unset GH_TOKEN GITHUB_TOKEN\n"
+            f"  {self._cmd}        # complete the device/OAuth login\n"
+            "(Copilot needs OAuth or a fine-grained token.) "
+            "Or switch backend with --llm claude."
+        )
+        return hint
 
 
 class GeminiCliBridge(_CliBridge):
