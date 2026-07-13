@@ -71,6 +71,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Branch to diff against (default: main).",
     )
     p.add_argument(
+        "--repair-existing",
+        action="store_true",
+        help=(
+            "If the existing test suite doesn't compile (pre-flight), "
+            "try to fix the broken existing test files with the LLM "
+            "before generating new tests, instead of aborting. Mutates "
+            "existing test files and spends extra tokens; off by "
+            "default."
+        ),
+    )
+    p.add_argument(
         "--committed-only",
         action="store_true",
         help=(
@@ -324,6 +335,7 @@ def main(argv: list[str] | None = None) -> int:
         repo_path=repo_path,
         base_branch=args.base_branch,
         committed_only=args.committed_only,
+        repair_existing=args.repair_existing,
         test_dirs=test_dirs,
         source_root=args.source_root,
         max_fix_retries=args.max_fix_retries,

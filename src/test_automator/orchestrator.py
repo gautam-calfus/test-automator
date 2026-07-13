@@ -271,24 +271,132 @@ class LocalTestPipeline:
             except Exception:
                 continue
             if ok is False:
-                errs = "\n".join(
-                    ln for ln in output.splitlines()
-                    if ln.strip().startswith("e:")
-                    or ": error:" in ln
-                    or "error:" in ln.lower()
-                )[:2000]
+                if getattr(self._config, "repair_existing", False):
+                    ok, output = self._repair_existing_tests(
+                        handler, output, timeout
+                    )
+                    if ok:
+                        logger.info(
+                            "pre-flight: repaired existing %s test suite "
+                            "— it now compiles; continuing",
+                            handler.name,
+                        )
+                        continue
+                errs = self._compile_error_lines(output)
+                repaired_note = (
+                    " (--repair-existing tried but couldn't fix all of "
+                    "them)"
+                    if getattr(self._config, "repair_existing", False)
+                    else ""
+                )
                 return (
                     f"Your existing {handler.name} test suite does NOT "
-                    f"compile on this branch — aborting before spending "
-                    f"any LLM tokens.\n\n{handler.name.title()} compiles "
-                    f"all tests together, so these pre-existing errors "
-                    f"would make EVERY generated file report a build "
-                    f"error that the fix loop cannot repair (the errors "
-                    f"live in other files). Fix or stash the broken test "
-                    f"files, get the suite compiling, then re-run.\n\n"
+                    f"compile on this branch{repaired_note} — aborting "
+                    f"before spending tokens on generation.\n\n"
+                    f"{handler.name.title()} compiles all tests together, "
+                    f"so these pre-existing errors would make EVERY "
+                    f"generated file report a build error the fix loop "
+                    f"cannot repair (the errors live in other files). Fix "
+                    f"or stash the broken test files (or use "
+                    f"--repair-existing), then re-run.\n\n"
                     f"Compile errors:\n{errs or output[:2000]}"
                 )
         return None
+
+    @staticmethod
+    def _compile_error_lines(output: str) -> str:
+        return "\n".join(
+            ln for ln in output.splitlines()
+            if ln.strip().startswith("e:")
+            or ": error:" in ln
+            or "error:" in ln.lower()
+        )[:2000]
+
+    def _broken_test_files(self, output: str) -> list[str]:
+        """Repo-relative paths of test files with compile errors,
+        parsed from Gradle/Maven/kotlinc output. De-duplicated, order
+        preserved."""
+        import os
+        import re
+
+        repo = os.path.abspath(self._config.repo_path)
+        found: list[str] = []
+        # Absolute or relative paths ending in a source extension that
+        # appear on an error line.
+        path_re = re.compile(r"(/?[\w./\-]+\.(?:kt|java))")
+        for ln in output.splitlines():
+            low = ln.lower()
+            if not (ln.strip().startswith("e:") or "error" in low):
+                continue
+            for m in path_re.finditer(ln):
+                p = m.group(1)
+                ap = p if os.path.isabs(p) else os.path.join(repo, p)
+                if not os.path.isfile(ap):
+                    continue
+                rel = os.path.relpath(ap, repo)
+                # only test files
+                if "/test/" in rel.replace(os.sep, "/") and rel not in found:
+                    found.append(rel)
+        return found
+
+    def _repair_existing_tests(
+        self, handler, output: str, timeout: int
+    ) -> tuple[bool | None, str]:
+        """Best-effort repair of pre-existing broken test files with the
+        LLM, then re-check compilation. Bounded by max_fix_retries
+        rounds. Returns the final (ok, output) from the compile check.
+        """
+        import os
+
+        from test_automator.models import GeneratedTest
+
+        rounds = max(1, getattr(self._config, "max_fix_retries", 2))
+        for rnd in range(1, rounds + 1):
+            broken = self._broken_test_files(output)
+            if not broken:
+                break
+            logger.warning(
+                "--repair-existing: round %d/%d — %d broken test "
+                "file(s) to repair: %s",
+                rnd, rounds, len(broken), broken,
+            )
+            for rel in broken:
+                fh_handler = get_handler_for_file(rel)
+                if fh_handler is None:
+                    continue
+                abs_p = os.path.join(self._config.repo_path, rel)
+                try:
+                    with open(abs_p, encoding="utf-8") as fh:
+                        content = fh.read()
+                except OSError:
+                    continue
+                gen = GeneratedTest(
+                    source_file_path=rel,
+                    test_file_path=rel,
+                    content=content,
+                    covered_functions=[],
+                )
+                try:
+                    fixed = self._fixer._fix_one(gen, output)
+                except LLMSessionLimitError:
+                    raise
+                except Exception as exc:
+                    logger.warning(
+                        "--repair-existing: could not repair %s: %s",
+                        rel, exc,
+                    )
+                    continue
+                with open(abs_p, "w", encoding="utf-8") as fh:
+                    fh.write(fixed.content)
+            ok, output = handler.check_tests_compile(
+                self._config.repo_path, timeout
+            )
+            if ok:
+                return True, output
+        ok, output = handler.check_tests_compile(
+            self._config.repo_path, timeout
+        )
+        return ok, output
 
     def _generate_run_fix(
         self,

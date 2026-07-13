@@ -73,6 +73,13 @@ class LocalTestConfig:
 
     repo_path: str
     base_branch: str = "main"
+    repair_existing: bool = False
+    """When the pre-flight finds the existing test suite doesn't
+    compile, attempt to fix those pre-existing broken test files with
+    the LLM (bounded by max_fix_retries) before generating new tests,
+    instead of aborting. Off by default — it mutates existing test
+    files and spends tokens on code outside your diff. Set via
+    --repair-existing."""
     committed_only: bool = False
     """When True, diff ``base...HEAD`` (committed changes only).
     Default False: diff the working tree against the merge-base with
