@@ -418,3 +418,36 @@ def test_orchestrator_reports_fail_when_step_fails() -> None:
     is_passing = all_steps_ok and test_result.is_passing
 
     assert is_passing is False
+
+
+def test_build_test_command_filters_by_declared_package_not_path(tmp_path):
+    """When a test file's declared package differs from its directory
+    layout, Gradle --tests must use the REAL package+class (or it runs
+    0 tests). Regression for the Asurint 'unit/com/asurint/... path but
+    package unit.<short>' mismatch that produced passed=0 failed=0
+    errors=0."""
+    from test_automator.languages.kotlin import runner
+
+    f = tmp_path / "FooTests.kt"
+    f.write_text(
+        "package unit.handlers.commands\n\n"
+        "import io.mockk.mockk\n\n"
+        "class FooTests {\n"
+        "    @Test\n"
+        "    fun `does x`() {}\n"
+        "}\n"
+    )
+    cmd = runner.build_test_command([str(f)], str(tmp_path))
+    fqn = cmd[cmd.index("--tests") + 1]
+    assert fqn == "unit.handlers.commands.FooTests"
+
+
+def test_build_test_command_falls_back_to_path_when_unreadable():
+    """A non-existent path can't be read → path-based FQN (old
+    behavior preserved)."""
+    from test_automator.languages.kotlin import runner
+
+    cmd = runner.build_test_command(
+        ["src/test/kotlin/unit/services/BarTests.kt"], "."
+    )
+    assert cmd[cmd.index("--tests") + 1] == "unit.services.BarTests"

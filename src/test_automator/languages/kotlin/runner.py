@@ -72,9 +72,47 @@ def build_test_command(test_files: list[str], repo_path: str) -> list[str]:
     """
     cmd = ["./gradlew", "test", "--console=plain"]
     for path in test_files:
-        class_name = _path_to_class_name(path)
+        class_name = _fqn_for_test_file(path)
         cmd.extend(["--tests", class_name])
     return cmd
+
+
+# Kotlin package declaration and the first (test) class/object name.
+_PKG_DECL_RE = re.compile(r"^\s*package\s+([\w.]+)", re.MULTILINE)
+_CLASS_DECL_RE = re.compile(
+    r"^\s*(?:@\w+\s*(?:\([^)]*\))?\s*)*"
+    r"(?:public\s+|internal\s+|open\s+|abstract\s+|final\s+|sealed\s+)*"
+    r"(?:class|object)\s+([A-Za-z_]\w*)",
+    re.MULTILINE,
+)
+
+
+def _fqn_for_test_file(test_file_path: str) -> str:
+    """Fully-qualified class name to pass to Gradle ``--tests``.
+
+    Derived from the file's ACTUAL ``package`` declaration + first
+    class/object name, NOT from the file path. Path-based guessing
+    silently breaks when a repo's package convention differs from its
+    directory layout (e.g. Asurint tests live at ``unit/<short>/`` with
+    ``package unit.<short>`` while a generated file might sit at a
+    ``unit/com/asurint/...`` path): Gradle then matches nothing and
+    runs 0 tests, which looks like a mysterious failure. Reading the
+    real package+class makes the filter match what's on disk.
+
+    Falls back to the path-based guess if the file can't be read/parsed.
+    """
+    try:
+        with open(test_file_path, encoding="utf-8") as fh:
+            content = fh.read()
+    except OSError:
+        return _path_to_class_name(test_file_path)
+
+    pkg_m = _PKG_DECL_RE.search(content)
+    cls_m = _CLASS_DECL_RE.search(content)
+    if cls_m:
+        cls = cls_m.group(1)
+        return f"{pkg_m.group(1)}.{cls}" if pkg_m else cls
+    return _path_to_class_name(test_file_path)
 
 
 def _path_to_class_name(test_file_path: str) -> str:
