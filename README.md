@@ -141,8 +141,10 @@ The commit message includes the pytest results, so reviewers see pass/fail count
 | Flag | Default | What it does |
 |---|---|---|
 | `--repo-path` | (auto-detect) | Path to your repo root |
-| `--base-branch` | `main` | Branch to diff against |
+| `--base-branch` | `main` | Branch to diff against. A remote ref (`origin/develop`) is auto-fetched first so the diff reflects the live remote |
+| `--no-fetch` | off | Skip the auto-fetch for a remote `--base-branch` (offline/deterministic) |
 | `--committed-only` | off | Diff committed changes only (`base...HEAD`) instead of the working tree |
+| `--repair-existing` | off | If the existing test suite doesn't compile, try to LLM-fix the broken existing test files before generating |
 | `--test-dirs` | `tests` | Comma-separated test dirs (priority order) |
 | `--source-root` | (none) | Restrict analysis to files under this path |
 | `--max-fix-retries` | `1` | How many times to ask Claude to fix failures |
