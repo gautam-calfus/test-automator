@@ -93,8 +93,23 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--max-fix-retries",
         type=int,
-        default=3,
-        help="Times to ask Claude to fix failing tests (default: 3).",
+        default=2,
+        help=(
+            "Times to ask the LLM to fix failing tests (default: 2). "
+            "The first fix lands most real repairs; extra attempts on a "
+            "stubborn file mostly burn quota, so keep this low."
+        ),
+    )
+    p.add_argument(
+        "--effort",
+        choices=["low", "medium", "high", "xhigh", "max"],
+        default="low",
+        help=(
+            "Reasoning effort for Claude Code calls (default: low). "
+            "Higher effort spends far more reasoning tokens per call "
+            "(minutes-long calls, faster quota burn); test generation "
+            "rarely needs it. Raise to medium/high only for tricky code."
+        ),
     )
     p.add_argument(
         "--no-cache",
@@ -321,6 +336,7 @@ def main(argv: list[str] | None = None) -> int:
         llm_provider=args.llm,
         llm_cmd=args.llm_cmd,
         claude_code_cmd=args.claude_code_cmd,
+        claude_effort=args.effort,
         claude_code_timeout=args.claude_code_timeout,
         claude_code_max_output_tokens=args.max_output_tokens,
         test_runner_timeout=args.test_runner_timeout,

@@ -81,6 +81,15 @@ def test_claude_argv_keeps_agent_disabling_flags(captured):
     assert argv[-1] == "USER TASK"
     # Claude-only output-token cap still applied
     assert "CLAUDE_CODE_MAX_OUTPUT_TOKENS" in captured["env"]
+    # Reasoning effort passed through (default low = cheaper/faster calls)
+    assert argv[argv.index("--effort") + 1] == "low"
+
+
+def test_claude_effort_is_configurable(captured):
+    bridge = ClaudeCodeBridge(cmd="echo", timeout=5, effort="high")
+    bridge.generate("s", "u")
+    argv = captured["argv"]
+    assert argv[argv.index("--effort") + 1] == "high"
 
 
 def test_generic_bridge_appends_prompt_to_command(captured):

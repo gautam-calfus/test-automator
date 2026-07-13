@@ -273,8 +273,10 @@ class ClaudeCodeBridge(_CliBridge):
         cmd: str = "claude",
         timeout: int = 180,
         max_output_tokens: int = 16_000,
+        effort: str = "low",
     ) -> None:
         self._max_output_tokens = max_output_tokens
+        self._effort = effort
         super().__init__(cmd=cmd, timeout=timeout)
 
     def _argv(self, system_prompt: str, user_prompt: str) -> list[str]:
@@ -285,6 +287,7 @@ class ClaudeCodeBridge(_CliBridge):
             self._cmd,
             "--print",
             "--output-format", "json",
+            "--effort", self._effort,
             "--tools", "",
             "--system-prompt", system_prompt,
             "--permission-mode", "bypassPermissions",
@@ -447,6 +450,7 @@ def create_bridge(
     cmd: str | None = None,
     timeout: int = 180,
     max_output_tokens: int = 16_000,
+    effort: str = "low",
 ) -> LLMBridge:
     """Build the right bridge for ``provider``.
 
@@ -457,12 +461,14 @@ def create_bridge(
         timeout: seconds per LLM call (all providers).
         max_output_tokens: Claude-only response cap (ignored by others,
             which have no equivalent knob).
+        effort: Claude-only reasoning-effort level (ignored by others).
     """
     if provider == "claude":
         return ClaudeCodeBridge(
             cmd=cmd or "claude",
             timeout=timeout,
             max_output_tokens=max_output_tokens,
+            effort=effort,
         )
     if provider == "copilot":
         return CopilotCliBridge(cmd=cmd or "copilot", timeout=timeout)

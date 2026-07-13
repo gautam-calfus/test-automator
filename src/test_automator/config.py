@@ -7,7 +7,15 @@ from dataclasses import dataclass, field
 DEFAULT_TEST_DIRS: tuple[str, ...] = ("tests", "test")
 DEFAULT_BOT_NAME = "test-automator[bot]"
 DEFAULT_BOT_EMAIL = "test-automator[bot]@users.noreply.github.com"
-DEFAULT_MAX_FIX_RETRIES = 3
+DEFAULT_MAX_FIX_RETRIES = 2
+# Reasoning effort for Claude Code calls. The interactive app defaults
+# a subscription session to "high", which our headless one-shot calls
+# would otherwise inherit — high effort spends large reasoning-token
+# budgets, making each generate/fix call run many minutes and burn
+# quota fast. Test generation is a fairly mechanical task, so "low" is
+# a big token/time saving with little quality loss; raise via --effort
+# for tricky code. (low | medium | high | xhigh | max)
+DEFAULT_CLAUDE_EFFORT = "low"
 # Optional cap on changed functions processed per file. Default 0 =
 # UNLIMITED: cover everything that changed (thorough coverage is the
 # whole point). A user who wants to bound a single huge file can set
@@ -103,6 +111,10 @@ class LocalTestConfig:
     Set via --llm-cmd.
     """
     claude_code_cmd: str = DEFAULT_CLAUDE_CODE_CMD
+    claude_effort: str = DEFAULT_CLAUDE_EFFORT
+    """Reasoning-effort level for Claude Code calls (--effort). See
+    DEFAULT_CLAUDE_EFFORT: 'low' keeps per-call token/time down; raise
+    for tricky code."""
     claude_code_timeout: int = DEFAULT_CLAUDE_CODE_TIMEOUT
     claude_code_max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
     """Output-token cap per Claude Code call, applied via the
