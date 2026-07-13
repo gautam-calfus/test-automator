@@ -170,6 +170,16 @@ def _find_top_level_closing_brace(text: str) -> int:
             i += 1
             continue
 
+        # Backtick-quoted identifier: Kotlin lets test names be escaped
+        # identifiers like ``fun `saves {x} when empty`()`` — braces
+        # inside them are part of the NAME, not real blocks, so skip to
+        # the closing backtick. (Asurint's convention is backticked
+        # English test names, so this is common here.)
+        if ch == "`":
+            close = text.find("`", i + 1)
+            i = close + 1 if close != -1 else n
+            continue
+
         # Real brace counting
         if ch == "{":
             depth += 1

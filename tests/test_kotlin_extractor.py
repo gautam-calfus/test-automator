@@ -463,3 +463,23 @@ val y = 2
         # The error message should be the "no package declaration" one,
         # not a fence-parsing error
         assert "package" in str(e).lower()
+
+
+def test_braces_inside_backtick_test_name_dont_break_extraction():
+    """Kotlin escaped identifiers (backtick test names) may contain
+    literal braces; they must not be counted as real blocks, or a
+    complete file is falsely rejected as truncated."""
+    from test_automator.languages.kotlin.extractor import extract_kotlin_file
+
+    src = (
+        "package unit.handlers\n\n"
+        "class FooTests {\n"
+        "    @Test\n"
+        "    fun `saveLog not called when {precondition}`() {\n"
+        "        verify(exactly = 0) { svc.saveLog(any()) }\n"
+        "    }\n"
+        "}\n"
+    )
+    out = extract_kotlin_file(src)
+    assert out.rstrip().endswith("}")
+    assert "saveLog not called" in out
