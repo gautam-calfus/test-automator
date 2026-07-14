@@ -95,3 +95,47 @@ def test_errors_always_attribute() -> None:
     gen = _gen("src/utils/a.test.js", "src/utils/a.js", ["fn"])
     result = _result([], errors=1)
     assert FailureFixer._has_failures(gen, result) is True
+
+
+# --- single-file fix always attempts, regardless of attribution ---
+
+def test_single_file_failure_triggers_llm_even_without_name_match():
+    """The per-file flow hands the fixer ONE file. Its failure must be
+    fixed even when the failed-test id doesn't contain the file/class or
+    a covered-function name (the common Kotlin backtick-name case) —
+    otherwise retries are silent no-ops."""
+    from types import SimpleNamespace
+
+    gen = _gen(
+        "src/test/kotlin/unit/services/FooServiceTests.kt",
+        "src/main/kotlin/com/x/FooService.kt",
+        ["logRevisitIfNavigatedBack"],
+    )
+    failing = _result(["does not log when already visited"])
+    passing = TestRunResult(
+        passed=25, failed=0, errors=0, total=25, output="",
+        failed_test_ids=[], is_passing=True,
+    )
+
+    class _Runner:
+        def run(self, tests):
+            return passing
+
+    class _LLM:
+        def __init__(self):
+            self.calls = 0
+
+        def generate(self, system_prompt, user_prompt):
+            self.calls += 1
+            return (
+                "package unit.services\n\n"
+                "class FooServiceTests {\n"
+                "    @Test\n    fun `x`() {}\n}\n"
+            )
+
+    llm = _LLM()
+    fixer = FailureFixer(SimpleNamespace(max_fix_retries=3), _Runner(), llm)
+    tests, result = fixer.fix([gen], failing)
+
+    assert llm.calls >= 1, "single-file failure must invoke the LLM fixer"
+    assert result.is_passing

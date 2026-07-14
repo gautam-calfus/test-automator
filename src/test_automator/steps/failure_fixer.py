@@ -178,9 +178,20 @@ class FailureFixer:
         still proceed. This is much better than losing all of the work
         from a multi-file run because one fix attempt went sideways.
         """
+        # When exactly one file is being fixed (the per-file flow),
+        # every failure belongs to it by construction — attribution is
+        # unnecessary and, worse, the name-matching heuristic misfires
+        # for Kotlin/Jest backtick/English test names that don't contain
+        # the source function name, silently skipping the LLM fix and
+        # wasting every retry as a no-op re-run. So for a single file,
+        # any non-passing result means "fix it".
+        single_file = len(tests) == 1
         result_tests: list[GeneratedTest] = []
         for gen in tests:
-            if not self._has_failures(gen, result):
+            attributed = self._has_failures(gen, result) or (
+                single_file and (result.failed + result.errors) > 0
+            )
+            if not attributed:
                 result_tests.append(gen)
                 continue
             try:
