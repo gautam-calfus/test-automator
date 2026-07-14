@@ -114,9 +114,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--max-fix-retries",
         type=int,
-        default=2,
+        default=3,
         help=(
-            "Times to ask the LLM to fix failing tests (default: 2). "
+            "Times to ask the LLM to fix failing tests (default: 3). "
             "The first fix lands most real repairs; extra attempts on a "
             "stubborn file mostly burn quota, so keep this low."
         ),

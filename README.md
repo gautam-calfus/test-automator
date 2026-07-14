@@ -147,7 +147,7 @@ The commit message includes the pytest results, so reviewers see pass/fail count
 | `--repair-existing` | off | If the existing test suite doesn't compile, try to LLM-fix the broken existing test files before generating |
 | `--test-dirs` | `tests` | Comma-separated test dirs (priority order) |
 | `--source-root` | (none) | Restrict analysis to files under this path |
-| `--max-fix-retries` | `1` | How many times to ask Claude to fix failures |
+| `--max-fix-retries` | `3` | How many times to ask the LLM to fix failing tests |
 | `--commit-tests` | off | Commit the generated tests |
 | `--push` | off | Push the commit; implies `--commit-tests` |
 | `--open-pr` | off | Open PR via `gh`; implies `--push` |

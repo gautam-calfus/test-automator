@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 DEFAULT_TEST_DIRS: tuple[str, ...] = ("tests", "test")
 DEFAULT_BOT_NAME = "test-automator[bot]"
 DEFAULT_BOT_EMAIL = "test-automator[bot]@users.noreply.github.com"
-DEFAULT_MAX_FIX_RETRIES = 2
+DEFAULT_MAX_FIX_RETRIES = 3
 # Reasoning effort for Claude Code calls. The interactive app defaults
 # a subscription session to "high", which our headless one-shot calls
 # would otherwise inherit — high effort spends large reasoning-token
