@@ -169,7 +169,17 @@ class LocalTestPipeline:
         # Kotlin/Java compile all tests together, so one broken
         # pre-existing test makes every file report errors=1 and the
         # fix loop can never fix errors that live in other files.
-        preflight_msg = self._preflight_compile_check(affected + removed)
+        # Test files this run will regenerate/prune are EXPECTED to be
+        # broken right now (e.g. they call a source method you just
+        # removed) — the tool rewrites them, so don't let the pre-flight
+        # abort on their errors. Only breakage in files the tool won't
+        # touch is a real blocker.
+        will_regenerate = {
+            t.test_file_path for t in (existing_tests or [])
+        }
+        preflight_msg = self._preflight_compile_check(
+            affected + removed, will_regenerate
+        )
         if preflight_msg is not None:
             logger.error(preflight_msg)
             steps.append(StepOutcome(
@@ -246,12 +256,21 @@ class LocalTestPipeline:
             pr_info.base_branch, pr_info.head_branch,
         )
 
-    def _preflight_compile_check(self, items: list) -> str | None:
+    def _preflight_compile_check(
+        self, items: list, will_regenerate: set[str] | None = None
+    ) -> str | None:
         """Compile the existing test suite once per involved language
         (Kotlin/Java). Returns an actionable error message if any
-        already fails to compile, else None. Best-effort: languages
-        without the hook, or an indeterminate result, are skipped.
+        already fails to compile IN A FILE THIS RUN WON'T TOUCH, else
+        None. Best-effort: languages without the hook, or an
+        indeterminate result, are skipped.
+
+        ``will_regenerate`` are test files the tool is about to rewrite
+        or prune — they're allowed to be broken now (e.g. they call a
+        source method you just removed); the tool fixes them. Only
+        breakage OUTSIDE that set is a real blocker.
         """
+        regen = {self._norm_path(p) for p in (will_regenerate or set())}
         seen: set[str] = set()
         timeout = getattr(self._config, "test_runner_timeout", 600)
         for it in items:
@@ -282,6 +301,21 @@ class LocalTestPipeline:
                             handler.name,
                         )
                         continue
+                # If every broken file is one this run will regenerate
+                # or prune, the tool will fix them — don't abort.
+                broken = {
+                    self._norm_path(b) for b in self._broken_test_files(output)
+                }
+                external = broken - regen
+                if broken and not external:
+                    logger.info(
+                        "pre-flight: existing %s suite doesn't compile, "
+                        "but only in file(s) this run will regenerate/"
+                        "prune (%s) — continuing.",
+                        handler.name,
+                        ", ".join(sorted(broken)),
+                    )
+                    continue
                 errs = self._compile_error_lines(output)
                 repaired_note = (
                     " (--repair-existing tried but couldn't fix all of "
@@ -302,6 +336,11 @@ class LocalTestPipeline:
                     f"Compile errors:\n{errs or output[:2000]}"
                 )
         return None
+
+    @staticmethod
+    def _norm_path(p: str) -> str:
+        p = p.replace("\\", "/")
+        return p[2:] if p.startswith("./") else p
 
     @staticmethod
     def _compile_error_lines(output: str) -> str:

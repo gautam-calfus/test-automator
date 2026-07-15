@@ -172,3 +172,54 @@ def test_repair_existing_still_broken_aborts_with_note(tmp_path, monkeypatch):
     msg = p._preflight_compile_check([_fn("src/main/kotlin/com/x/Foo.kt")])
     assert msg is not None
     assert "couldn't fix all of them" in msg
+
+
+def test_broken_target_test_file_is_not_a_blocker(tmp_path, monkeypatch):
+    """If the ONLY broken test file is one this run will regenerate
+    (e.g. it calls a source method you just removed), the pre-flight
+    should NOT abort — the tool rewrites/prunes it."""
+    from test_automator.languages.java import runner as java_runner
+
+    tf = tmp_path / "src" / "test" / "java" / "com" / "x" / "CMServiceTest.java"
+    tf.parent.mkdir(parents=True)
+    tf.write_text("class CMServiceTest {}")
+
+    monkeypatch.setattr(
+        java_runner, "check_tests_compile",
+        lambda repo, timeout=600: (
+            False,
+            f"{tf}:76: error: cannot find symbol\n",
+        ),
+    )
+    p = _pipeline(tmp_path)
+    msg = p._preflight_compile_check(
+        [_fn("src/main/java/com/x/CMService.java")],
+        will_regenerate={"src/test/java/com/x/CMServiceTest.java"},
+    )
+    assert msg is None  # broken file is the regenerate target → proceed
+
+
+def test_broken_unrelated_file_still_aborts(tmp_path, monkeypatch):
+    """Breakage in a file the run WON'T touch is still a hard blocker,
+    even if a regenerate-target is also broken."""
+    from test_automator.languages.java import runner as java_runner
+
+    target = tmp_path / "src/test/java/com/x/CMServiceTest.java"
+    other = tmp_path / "src/test/java/com/x/OtherTest.java"
+    for f in (target, other):
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("class T {}")
+
+    monkeypatch.setattr(
+        java_runner, "check_tests_compile",
+        lambda repo, timeout=600: (
+            False,
+            f"{target}:1: error: x\n{other}:1: error: y\n",
+        ),
+    )
+    p = _pipeline(tmp_path)
+    msg = p._preflight_compile_check(
+        [_fn("src/main/java/com/x/CMService.java")],
+        will_regenerate={"src/test/java/com/x/CMServiceTest.java"},
+    )
+    assert msg is not None  # OtherTest is unrelated → abort
