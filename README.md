@@ -39,14 +39,24 @@ cd test-automator
 pip install -e .
 ```
 
-Or install a tagged release directly:
+Or install a tagged release directly (pin your whole team to the same version):
 ```bash
-pip install "git+https://github.com/gautam-calfus/test-automator.git@v0.1"
+pip install "git+https://github.com/gautam-calfus/test-automator.git@v0.4.0"
 ```
 
-Verify:
+> **Upgrading?** `pip` won't replace an already-installed copy unless you force it —
+> so an old checkout keeps running old code. To pull a new release into an
+> existing environment:
+> ```bash
+> pip install --upgrade --force-reinstall --no-cache-dir \
+>   "git+https://github.com/gautam-calfus/test-automator.git@v0.4.0"
+> ```
+> For the bleeding edge instead of a pinned release, use `@main`.
+
+Verify you're on the expected version:
 ```bash
 test-automator --help
+pip show test-automator | grep -i version   # should print 0.4.0
 ```
 
 ## Quick start

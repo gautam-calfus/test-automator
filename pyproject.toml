@@ -1,6 +1,6 @@
 [project]
 name = "test-automator"
-version = "0.1"
+version = "0.4.0"
 description = "Generate tests locally using Claude Code (no Anthropic API key required). Supports Python (pytest), Kotlin (JUnit 5 + MockK + Strikt), Java (JUnit + Mockito), and JavaScript/TypeScript (Jest/Vitest)."
 readme = "README.md"
 requires-python = ">=3.10"
