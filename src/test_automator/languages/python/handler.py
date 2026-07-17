@@ -26,6 +26,9 @@ class PythonLanguageHandler:
 
     name = "python"
     source_extensions = (".py",)
+    # Line-comment token for the embedded idempotency manifest (Python
+    # uses '#'; the default for other handlers is '//').
+    manifest_comment = "#"
     # Indentation is semantic in Python, so the formatting-only change
     # detector must keep leading-indent when comparing function bodies
     # (a re-indent can change control flow).

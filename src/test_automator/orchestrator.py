@@ -24,6 +24,7 @@ from test_automator.steps import (
     TestGenerator,
     TestRunner,
 )
+from test_automator.utils import manifest
 from test_automator.utils.exceptions import (
     LLMSessionLimitError,
     LocalTestAutomatorError,
@@ -464,15 +465,24 @@ class LocalTestPipeline:
         On a session-limit abort we stop cleanly and return whatever
         was produced so far.
         """
-        # Idempotency: drop files whose existing tests already pass AND
-        # already cover every changed function. Without this, a second
-        # run against the same base branch sees those files as "existing
-        # tests to update", re-runs the LLM in incremental mode, and
-        # rewrites tests that were already correct — churning passing
-        # tests into different (still passing) code every run. Skipped
-        # here so no LLM call is made and the file on disk is untouched.
+        # Idempotency: drop functions whose source is unchanged since
+        # their tests were generated (tracked by the in-file coverage
+        # manifest — see utils.manifest). Without this, a re-run against
+        # the same base branch sees the tests as "existing" and re-invokes
+        # the LLM in incremental mode, rewriting/duplicating tests that
+        # were already correct. The manifest check is independent of how
+        # tests are named, so it works even when the LLM names tests for
+        # behavior rather than the method under test.
         if not getattr(self._config, "regenerate_passing", False):
-            affected = self._skip_covered_passing(affected, existing_tests)
+            affected = self._filter_up_to_date(affected, existing_tests)
+
+        # Current source-hash of every function we're (re)generating, so a
+        # passing file can be stamped with an up-to-date manifest before
+        # it's saved — that stamp is what makes the NEXT run a no-op.
+        hashes_by_key = {
+            fn.qualified_name: manifest.fn_hash(fn.source_code)
+            for fn in affected
+        }
 
         tests: list[GeneratedTest] = []
         last_result: TestRunResult | None = None
@@ -506,9 +516,12 @@ class LocalTestPipeline:
                         result.failed,
                         result.errors,
                     )
-                tests.append(gen)
-                last_result = result
                 if result.is_passing:
+                    # Stamp the coverage manifest ONLY after the tests
+                    # pass (comments never affect the run), so the saved
+                    # file records exactly which function versions have
+                    # passing tests — the signal the next run reads.
+                    gen = self._stamp_manifest(gen, hashes_by_key)
                     self._persist(gen)
                     logger.info(
                         "    ✓ saved %s (%d/%d done)",
@@ -522,6 +535,8 @@ class LocalTestPipeline:
                         "not saved as final",
                         gen.test_file_path,
                     )
+                tests.append(gen)
+                last_result = result
                 # Usage readout after each file so the developer can
                 # judge quota burn and stop whenever they like — every
                 # passing file so far is already saved to disk, so
@@ -551,25 +566,29 @@ class LocalTestPipeline:
 
         return tests, (last_result if len(tests) == 1 else None)
 
-    def _skip_covered_passing(
+    def _filter_up_to_date(
         self,
         affected: list[AffectedFunction],
         existing_tests: list,
     ) -> list[AffectedFunction]:
-        """Return ``affected`` with functions removed when their source
-        file's existing tests already pass AND already cover every
-        changed function in that file.
+        """Drop functions whose tests are already up to date, so a re-run
+        doesn't regenerate them.
 
-        The check is all-or-nothing per file: a file is only skipped
-        when EVERY one of its changed functions is already covered by a
-        passing existing test. If even one changed function is
-        uncovered, the file goes through normal (incremental)
-        generation so the new function gets a test.
+        Primary signal — the in-file coverage manifest (utils.manifest):
+        a function is up to date when the test file carries a manifest
+        entry whose hash equals the function's CURRENT source hash. This
+        is independent of test names, so it works even when the LLM names
+        tests for behavior rather than the method. Only the functions
+        that actually changed (hash differs or no entry) are kept for
+        regeneration; a file with no stale functions is skipped whole —
+        no LLM call, no test run, byte-identical on disk.
 
-        The cheap structural check (do the existing tests name-cover the
-        functions?) runs first; the expensive test run happens only for
-        files that pass it — so files that will be regenerated anyway
-        never pay for an extra runner invocation.
+        Fallback for test files WITHOUT a manifest (hand-written, or
+        generated before manifests existed): the older heuristic — skip
+        only when the existing tests name-cover every changed function
+        AND actually pass. Weaker (name-based), but better than always
+        regenerating; the first regeneration adds a manifest and the file
+        joins the fast path thereafter.
         """
         existing_by_source = {t.source_file_path: t for t in existing_tests}
         by_file: dict[str, list[AffectedFunction]] = {}
@@ -580,45 +599,87 @@ class LocalTestPipeline:
         skipped: list[str] = []
         for source_path, fns in by_file.items():
             existing = existing_by_source.get(source_path)
+            if existing is None:
+                kept.extend(fns)
+                continue
+
+            markers = manifest.parse(existing.content)
+            if markers:
+                stale = [
+                    fn for fn in fns
+                    if markers.get(fn.qualified_name)
+                    != manifest.fn_hash(fn.source_code)
+                ]
+                if stale:
+                    kept.extend(stale)
+                else:
+                    skipped.append(source_path)
+                continue
+
+            # No manifest → legacy heuristic (name-coverage + real pass).
             handler = get_handler_for_file(source_path)
-            if existing is None or handler is None:
-                kept.extend(fns)
-                continue
-            if not self._existing_covers_all(handler, existing, fns):
-                kept.extend(fns)
-                continue
-            # Structurally covered — now confirm the existing tests
-            # actually pass before deciding to leave them alone.
-            probe = GeneratedTest(
-                source_file_path=source_path,
-                test_file_path=existing.test_file_path,
-                content=existing.content,
-                covered_functions=[],
-            )
-            try:
-                result = self._runner.run([probe])
-            except Exception as exc:
-                logger.info(
-                    "could not verify existing tests for %s (%s) — "
-                    "regenerating to be safe",
-                    source_path, exc,
-                )
-                kept.extend(fns)
-                continue
-            if result.is_passing:
+            if (
+                handler is not None
+                and self._existing_covers_all(handler, existing, fns)
+                and self._existing_passes(source_path, existing)
+            ):
                 skipped.append(source_path)
             else:
                 kept.extend(fns)
 
         if skipped:
             logger.info(
-                "reusing %d existing test file(s) that already pass and "
-                "cover the changed functions — not regenerating (pass "
+                "up to date — skipping %d file(s) whose changed "
+                "function(s) are unchanged since their tests were "
+                "generated (no LLM call, no rewrite; pass "
                 "--regenerate-passing to force): %s",
                 len(skipped),
                 ", ".join(sorted(skipped)),
             )
         return kept
+
+    def _stamp_manifest(
+        self,
+        gen: GeneratedTest,
+        hashes_by_key: dict[str, str],
+    ) -> GeneratedTest:
+        """Embed/refresh the coverage manifest in a passing test file so
+        the next run recognizes these function versions as already
+        covered. Returns ``gen`` unchanged when there's nothing to stamp.
+        """
+        fn_to_hash = {
+            key: hashes_by_key[key]
+            for key in gen.covered_functions
+            if key in hashes_by_key
+        }
+        if not fn_to_hash:
+            return gen
+        handler = get_handler_for_file(gen.source_file_path)
+        comment = getattr(handler, "manifest_comment", "//") if handler else "//"
+        new_content = manifest.inject(gen.content, fn_to_hash, comment)
+        if new_content == gen.content:
+            return gen
+        return gen.model_copy(update={"content": new_content})
+
+    def _existing_passes(self, source_path: str, existing) -> bool:
+        """Run an existing (unmanifested) test file to see if it passes.
+        Best-effort: any error is treated as "does not pass" so we
+        regenerate rather than wrongly skip."""
+        probe = GeneratedTest(
+            source_file_path=source_path,
+            test_file_path=existing.test_file_path,
+            content=existing.content,
+            covered_functions=[],
+        )
+        try:
+            return self._runner.run([probe]).is_passing
+        except Exception as exc:
+            logger.info(
+                "could not verify existing tests for %s (%s) — "
+                "regenerating to be safe",
+                source_path, exc,
+            )
+            return False
 
     @staticmethod
     def _existing_covers_all(

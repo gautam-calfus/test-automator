@@ -187,6 +187,31 @@ The commit message includes the pytest results, so reviewers see pass/fail count
 | `--max-output-tokens` | `16000` | Output-token cap per Claude Code call — the main quota lever (`CLAUDE_CODE_MAX_OUTPUT_TOKENS`) |
 | `--java-file-filter` | (all) | Java: only generate for `services`, `controllers`, `daos`, `handlers` |
 | `--file` | (all changed) | Only process the named file(s). Repeat the flag or pass a comma-separated list (`--file a,b`) |
+| `--python-runner` | `auto` | How to run pytest: `auto` (uv when the project is uv-managed and `uv` is installed, else plain), `uv`, or `pip` |
+| `--regenerate-passing` | off | Force regeneration of files that are already up to date (bypass the idempotency check below) |
+
+## Re-running is idempotent
+
+Running the tool twice on the same code will **not** re-invoke the LLM or
+rewrite tests that are already correct. When a file's tests are generated
+and pass, the tool embeds a small **coverage manifest** at the top of the
+test file recording a hash of each covered function's source:
+
+```java
+// test-automator:begin — generated coverage manifest, do not edit
+// com.acme.AdminService.createNewUsers 5f2c9a1b3d4e6f70
+// test-automator:end
+```
+
+On a later run, a changed function is regenerated only if its current
+source hash differs from the recorded one. If nothing changed, the file
+is skipped entirely — **no LLM call, no diff** — even if the tests are
+named for behavior (`shouldInsertUserWhen…`) rather than the method. The
+manifest is committed with the test, so this holds across machines and in
+CI, not just on the laptop that first generated it. Change a function and
+only *that* function's tests regenerate; the manifest updates itself.
+
+Use `--regenerate-passing` to force a rewrite anyway.
 
 ## Choosing an LLM backend
 
