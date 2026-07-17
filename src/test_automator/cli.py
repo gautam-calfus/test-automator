@@ -133,6 +133,17 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument(
+        "--regenerate-passing",
+        action="store_true",
+        help=(
+            "Regenerate tests even for files whose existing tests already "
+            "pass AND already cover every changed function. By default "
+            "such files are left untouched (no LLM call, no rewrite), so "
+            "re-running the tool doesn't churn already-correct tests into "
+            "different code. Use this to force a rewrite."
+        ),
+    )
+    p.add_argument(
         "--no-cache",
         action="store_true",
         help=(
@@ -228,6 +239,19 @@ def _build_parser() -> argparse.ArgumentParser:
             "run for many minutes and burn the quota. 16000 is ample for "
             "one test file; raise it only for an unusually large file. A "
             "value already set in your environment wins."
+        ),
+    )
+    p.add_argument(
+        "--python-runner",
+        choices=["auto", "uv", "pip"],
+        default="auto",
+        help=(
+            "How to run pytest for Python projects (default: auto). "
+            "'auto' uses `uv run` when the project is uv-managed (a "
+            "uv.lock or a [tool.uv] table in pyproject.toml) and uv is "
+            "installed, otherwise plain `python -m pytest`. 'uv' forces "
+            "`uv run` (fails clearly if uv isn't installed); 'pip' forces "
+            "`python -m pytest`. No effect on Kotlin/Java/JS projects."
         ),
     )
     p.add_argument(
@@ -352,6 +376,7 @@ def main(argv: list[str] | None = None) -> int:
         max_fix_retries=args.max_fix_retries,
         max_functions_per_file=args.max_functions_per_file,
         use_cache=not args.no_cache,
+        regenerate_passing=args.regenerate_passing,
         commit_tests=commit_tests,
         commit_only_if_passing=not args.commit_on_failure,
         push=push,
@@ -363,6 +388,7 @@ def main(argv: list[str] | None = None) -> int:
         claude_code_timeout=args.claude_code_timeout,
         claude_code_max_output_tokens=args.max_output_tokens,
         test_runner_timeout=args.test_runner_timeout,
+        python_runner=args.python_runner,
         java_file_filter=java_file_filter,
         file_whitelist=_parse_file_whitelist(args.file),
     )

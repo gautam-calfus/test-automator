@@ -72,12 +72,25 @@ class PythonLanguageHandler:
         # test_dirs may be passed in from config so suggest_test_path picks
         # the user's preferred directory. Defaults match the original code.
         self._test_dirs = test_dirs or ["tests", "test"]
+        # How to invoke pytest: "auto" (uv when the project is uv-managed,
+        # else plain python), "uv", or "pip". Set from config via
+        # set_python_runner before the runner builds its command.
+        self._python_runner = "auto"
 
     def configure(self, test_dirs: list[str]) -> None:
         """Update test_dirs at runtime. Called by the orchestrator after
         reading LocalTestConfig.
         """
         self._test_dirs = list(test_dirs)
+
+    def set_python_runner(self, python_runner: str) -> None:
+        """Record the user's pytest-invocation preference (auto/uv/pip).
+
+        Optional hook (not part of the LanguageHandler protocol): the
+        TestRunner calls it via getattr before building the command so a
+        uv-managed project runs tests through ``uv run``.
+        """
+        self._python_runner = python_runner or "auto"
 
     def suggest_test_path(self, source_path: str) -> str:
         return finder.suggest_test_path(source_path, self._test_dirs)
@@ -93,7 +106,9 @@ class PythonLanguageHandler:
     def build_test_command(
         self, test_files: list[str], repo_path: str
     ) -> list[str]:
-        return runner.build_test_command(test_files, repo_path)
+        return runner.build_test_command(
+            test_files, repo_path, self._python_runner
+        )
 
     def parse_test_output(
         self, output: str, return_code: int

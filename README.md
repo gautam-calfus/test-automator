@@ -69,6 +69,35 @@ This:
 
 Tests are written to the configured test dir but **not committed** by default. You inspect them, decide what to keep, edit if needed, then commit yourself.
 
+### Python projects (pip or uv)
+
+By default (`--python-runner auto`) the runner detects how your project
+is managed and invokes pytest accordingly:
+
+- **uv-managed projects** — a `uv.lock`, or a `[tool.uv]` table in
+  `pyproject.toml` — run through **`uv run python -m pytest`**, so tests
+  execute against the exact dependencies in your lockfile. `uv run`
+  resolves/syncs the environment for you; you don't have to activate a
+  venv first.
+- **Everything else** (pip + venv, Poetry, etc.) runs through plain
+  **`python -m pytest`** using whatever interpreter is on `PATH`
+  (activate your venv first, as before).
+
+Override the choice with `--python-runner`:
+
+```bash
+test-automator --base-branch main --source-root src --python-runner uv
+```
+
+- `auto` (default): `uv run` when uv-managed **and** the `uv` binary is
+  installed; otherwise plain `python -m pytest`.
+- `uv`: always `uv run` (fails with a clear "command not found" if uv
+  isn't installed — that's the point of forcing it).
+- `pip`: always plain `python -m pytest`.
+
+The tool never installs packages — pytest and your project's deps must
+already be resolvable (`uv sync` / `pip install`) in the target project.
+
 ### Node.js (JavaScript/TypeScript) projects
 
 Works the same way — `.js`, `.jsx`, `.ts`, `.tsx`, `.mjs`, and `.cjs` files are picked up automatically:

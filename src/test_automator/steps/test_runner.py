@@ -244,6 +244,13 @@ class TestRunner:
     def _run_subprocess(
         self, handler: LanguageHandler, test_files: list[str]
     ) -> tuple[str, int]:
+        # Python-only optional hook: tell the handler how to invoke pytest
+        # (auto/uv/pip) so uv-managed projects run through `uv run`. Other
+        # handlers don't expose it and are unaffected.
+        set_runner = getattr(handler, "set_python_runner", None)
+        if callable(set_runner):
+            set_runner(getattr(self._config, "python_runner", "auto"))
+
         try:
             cmd = handler.build_test_command(test_files, self._config.repo_path)
         except NotImplementedError as exc:

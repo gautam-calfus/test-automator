@@ -102,6 +102,13 @@ class LocalTestConfig:
     LLM calls and an unreviewable pile of tests. Set via
     --max-functions-per-file. Use --file to target specific files when
     a big module's extra functions get skipped."""
+    regenerate_passing: bool = False
+    """When False (default), a file whose EXISTING tests already pass AND
+    already cover every changed function is left untouched — no LLM call,
+    no rewrite. This makes repeated runs idempotent: once the first run
+    produced correct, passing tests, a second run against the same base
+    branch won't churn them into different (but still passing) code. Set
+    --regenerate-passing to force regeneration of such files anyway."""
     use_cache: bool = True
     """Reuse previously generated tests when the source functions,
     mode, and existing test content are unchanged (content-hash cache).
@@ -135,6 +142,14 @@ class LocalTestConfig:
     environment wins.
     """
     test_runner_timeout: int = DEFAULT_TEST_RUNNER_TIMEOUT
+    python_runner: str = "auto"
+    """How to invoke pytest for Python projects (--python-runner):
+    'auto' (default) runs tests through ``uv run`` when the project is
+    uv-managed (a ``uv.lock`` or a ``[tool.uv]`` table in
+    ``pyproject.toml``) and the ``uv`` binary is installed, else falls
+    back to plain ``python -m pytest``; 'uv' always uses ``uv run``;
+    'pip' always uses ``python -m pytest``. Ignored for non-Python
+    languages."""
     bot_name: str = DEFAULT_BOT_NAME
     bot_email: str = DEFAULT_BOT_EMAIL
     languages: list[str] | None = None

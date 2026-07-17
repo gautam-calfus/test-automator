@@ -464,6 +464,16 @@ class LocalTestPipeline:
         On a session-limit abort we stop cleanly and return whatever
         was produced so far.
         """
+        # Idempotency: drop files whose existing tests already pass AND
+        # already cover every changed function. Without this, a second
+        # run against the same base branch sees those files as "existing
+        # tests to update", re-runs the LLM in incremental mode, and
+        # rewrites tests that were already correct — churning passing
+        # tests into different (still passing) code every run. Skipped
+        # here so no LLM call is made and the file on disk is untouched.
+        if not getattr(self._config, "regenerate_passing", False):
+            affected = self._skip_covered_passing(affected, existing_tests)
+
         tests: list[GeneratedTest] = []
         last_result: TestRunResult | None = None
         total = self._expected_file_count(affected, removed)
@@ -540,6 +550,97 @@ class LocalTestPipeline:
             logger.warning("Files produced before abort: %s", passed_files)
 
         return tests, (last_result if len(tests) == 1 else None)
+
+    def _skip_covered_passing(
+        self,
+        affected: list[AffectedFunction],
+        existing_tests: list,
+    ) -> list[AffectedFunction]:
+        """Return ``affected`` with functions removed when their source
+        file's existing tests already pass AND already cover every
+        changed function in that file.
+
+        The check is all-or-nothing per file: a file is only skipped
+        when EVERY one of its changed functions is already covered by a
+        passing existing test. If even one changed function is
+        uncovered, the file goes through normal (incremental)
+        generation so the new function gets a test.
+
+        The cheap structural check (do the existing tests name-cover the
+        functions?) runs first; the expensive test run happens only for
+        files that pass it — so files that will be regenerated anyway
+        never pay for an extra runner invocation.
+        """
+        existing_by_source = {t.source_file_path: t for t in existing_tests}
+        by_file: dict[str, list[AffectedFunction]] = {}
+        for fn in affected:
+            by_file.setdefault(fn.file_path, []).append(fn)
+
+        kept: list[AffectedFunction] = []
+        skipped: list[str] = []
+        for source_path, fns in by_file.items():
+            existing = existing_by_source.get(source_path)
+            handler = get_handler_for_file(source_path)
+            if existing is None or handler is None:
+                kept.extend(fns)
+                continue
+            if not self._existing_covers_all(handler, existing, fns):
+                kept.extend(fns)
+                continue
+            # Structurally covered — now confirm the existing tests
+            # actually pass before deciding to leave them alone.
+            probe = GeneratedTest(
+                source_file_path=source_path,
+                test_file_path=existing.test_file_path,
+                content=existing.content,
+                covered_functions=[],
+            )
+            try:
+                result = self._runner.run([probe])
+            except Exception as exc:
+                logger.info(
+                    "could not verify existing tests for %s (%s) — "
+                    "regenerating to be safe",
+                    source_path, exc,
+                )
+                kept.extend(fns)
+                continue
+            if result.is_passing:
+                skipped.append(source_path)
+            else:
+                kept.extend(fns)
+
+        if skipped:
+            logger.info(
+                "reusing %d existing test file(s) that already pass and "
+                "cover the changed functions — not regenerating (pass "
+                "--regenerate-passing to force): %s",
+                len(skipped),
+                ", ".join(sorted(skipped)),
+            )
+        return kept
+
+    @staticmethod
+    def _existing_covers_all(
+        handler, existing, fns: list[AffectedFunction]
+    ) -> bool:
+        """True when every function in ``fns`` is name-covered by some
+        test in ``existing``'s content. Uses the handler's own
+        parse/covers machinery; returns False (i.e. "regenerate") if the
+        handler lacks it or parsing fails.
+        """
+        parse = getattr(handler, "parse_existing_tests", None)
+        covers = getattr(handler, "covers", None)
+        if not (callable(parse) and callable(covers)):
+            return False
+        try:
+            existing_tests = parse(existing.content)
+        except Exception:
+            return False
+        for fn in fns:
+            if not any(covers(t.name, fn.name) for t in existing_tests):
+                return False
+        return True
 
     @staticmethod
     def _expected_file_count(affected: list, removed: list) -> int:
