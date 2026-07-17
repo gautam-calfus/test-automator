@@ -109,6 +109,32 @@ source as React):
 - Callback props are jest mocks: `const onSave = jest.fn()` +
   `expect(onSave).toHaveBeenCalledWith(...)`.
 
+BROWSER-API POLYFILLS AND resetMocks (Create React App / react-scripts):
+- CRA's Jest preset hardcodes `resetMocks: true`, which runs
+  `jest.resetAllMocks()` before EVERY test and strips the implementation
+  off every `jest.fn()`. A mock whose implementation is set only once in
+  `beforeAll` (or at module top level) therefore returns `undefined` from
+  the second test onward. This is a common, confusing failure — e.g.
+  "TypeError: Cannot destructure property 'matches' of 'undefined'".
+- Component libraries (antd, MUI) call browser APIs that jsdom does NOT
+  implement: `window.matchMedia`, `ResizeObserver`,
+  `IntersectionObserver`. Rendering their `Table`, `Select`, `Drawer`,
+  `DatePicker`, etc. will throw unless these are provided.
+- Provide them in a way that SURVIVES `resetMocks`, choosing one:
+    * define them in `beforeEach` so they are re-established every test, OR
+    * define them as PLAIN functions/classes (not `jest.fn()`), which
+      `resetAllMocks` has nothing to strip.
+  Prefer the plain-function form. Example (safe under resetMocks):
+      beforeEach(() => {
+        window.matchMedia = (query) => ({
+          matches: false, media: query, onchange: null,
+          addListener() {}, removeListener() {},
+          addEventListener() {}, removeEventListener() {}, dispatchEvent() {},
+        });
+      });
+- NEVER set a `jest.fn()` mock implementation only in `beforeAll` and
+  rely on it later; re-establish it in `beforeEach`.
+
 CONSTRAINTS:
 - Use ONLY dependencies that already exist in the project (the test
   framework itself plus what the source file imports). Do NOT add new
@@ -147,6 +173,12 @@ removed), the changed source functions, and what specifically changed.
   Library patterns (`render`, `screen`, `fireEvent`, `renderHook` for
   hooks) and assert on rendered output, never on component internals
   or snapshots. Reuse the existing file's RTL imports and helpers.
+  Reuse any browser-API polyfills the existing file already sets up
+  (`window.matchMedia`, `ResizeObserver`, `IntersectionObserver`); do
+  not re-declare them. If the file lacks one your new test needs, set
+  it inside the test (or a `beforeEach`) as a PLAIN function — never a
+  `jest.fn()` set in `beforeAll`, because CRA's `resetMocks: true`
+  strips `jest.fn()` implementations before every test.
 - Cover the CHANGED behavior specifically — the diff is shown to you.
   Do not re-test unchanged behavior that surviving tests already cover.
 - Be thorough on the changed behavior: cover each new/modified branch
@@ -175,6 +207,25 @@ content, and the test runner's output.
 - Preserve the test-title convention: titles start with the source
   function name.
 - Do not add new package dependencies.
+
+COMMON ROOT CAUSES — check these before rewriting assertions:
+- If MANY tests fail identically at `render(...)` with an error like
+  "Cannot destructure property 'matches' of 'undefined'", "matchMedia
+  is not a function", or a missing `ResizeObserver`/`IntersectionObserver`,
+  the cause is a browser-API polyfill that jsdom lacks — NOT the
+  assertions. CRA's Jest preset sets `resetMocks: true`, so any polyfill
+  installed as a `jest.fn()` in `beforeAll` is stripped before each test.
+  Fix it once by (re-)establishing the polyfill in `beforeEach` as a
+  PLAIN function, e.g.:
+      beforeEach(() => {
+        window.matchMedia = (query) => ({
+          matches: false, media: query, onchange: null,
+          addListener() {}, removeListener() {},
+          addEventListener() {}, removeEventListener() {}, dispatchEvent() {},
+        });
+      });
+  Apply the smallest such change that unblocks rendering; do not churn
+  the individual test bodies when the failure is this shared setup issue.
 
 OUTPUT:
 - Respond with ONLY the complete corrected test file content. No
