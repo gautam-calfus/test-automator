@@ -220,6 +220,16 @@ manifest is committed with the test, so this holds across machines and in
 CI, not just on the laptop that first generated it. Change a function and
 only *that* function's tests regenerate; the manifest updates itself.
 
+Two things worth knowing:
+
+- **The manifest is written only when a file's tests pass.** A file whose
+  generated tests never pass won't get a manifest, so it will be retried
+  on the next run. Once it's green, it's frozen.
+- **Test files created before this feature existed have no manifest yet.**
+  Their *first* run under a manifest-aware build regenerates once (that's
+  the run that stamps the manifest); every run after is a no-op. Files
+  generated fresh are idempotent from run 1.
+
 Use `--regenerate-passing` to force a rewrite anyway.
 
 ## Choosing an LLM backend
@@ -285,7 +295,7 @@ By contrast, the GitHub Actions version costs ~$0.05-$0.20 per PR via the pay-pe
 
 2. **No `tests/conftest.py` discovery.** Claude doesn't see your fixtures. If your existing tests rely heavily on conftest, Claude's generated tests may try to redefine fixtures inline. Worth checking and editing.
 
-3. **The `covers()` heuristic is imperfect.** If you have a source function `bulk` and another `bulk_discount`, tests covering `bulk_discount` (e.g., `test_bulk_discount_zero`) might be wrongly matched to `bulk`. Pragmatic mitigation: name your functions distinctively.
+3. **The `covers()` name heuristic is imperfect (but no longer drives re-runs).** Re-run idempotency now uses the coverage manifest (see "Re-running is idempotent"), not test-name matching, so a re-run with no source change never churns. `covers()` is still used to decide which existing test to *replace* when a function actually changes — and there it can mismatch (e.g. tests for `bulk_discount` matched to `bulk`), which may leave a stale test behind instead of replacing it. Mitigation: name functions distinctively.
 
 4. **No class-based test support.** Free-floating `def test_*` only. If your team uses `class TestFoo:` style, the merge logic doesn't handle the class context cleanly.
 
@@ -314,6 +324,21 @@ Either `gh` isn't installed, you're not authenticated (`gh auth login`), or a PR
 ### Tests are weird/wrong/duplicated
 - Read them before committing — Claude has good days and bad days
 - If existing tests get clobbered, file an issue with the test file content before/after
+
+### Re-running keeps adding/rewriting tests even though nothing changed
+Almost always a **stale install**: you're running an old copy without the
+idempotency manifest. `pip` keeps whatever is already installed, so a
+plain re-install is a no-op. Force it, then confirm the manifest module is
+present:
+```bash
+pip install --upgrade --force-reinstall --no-cache-dir \
+  "git+https://github.com/gautam-calfus/test-automator.git@v0.1"
+python -c "import test_automator.utils.manifest; print('OK')"
+```
+Also confirm the generated test file actually has a
+`// test-automator:begin` block at the top — if it doesn't, the previous
+run's tests didn't pass (only passing files get a manifest), or you're
+still on the stale build.
 
 ## Programmatic use
 
