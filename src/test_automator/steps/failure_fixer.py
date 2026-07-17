@@ -82,7 +82,18 @@ class FailureFixer:
                 },
             )
 
-            candidate_tests = self._fix_round(current_tests, current_result)
+            try:
+                candidate_tests = self._fix_round(current_tests, current_result)
+            except LLMSessionLimitError as exc:
+                # Quota exhausted mid-fix. Hand the best-so-far tests and
+                # their result back to the orchestrator on the exception
+                # so it can persist that work instead of discarding it —
+                # ``current_*`` holds the best ACCEPTED state (a rolled-
+                # back regression never overwrites it), e.g. the
+                # 30/33-passing file from an earlier attempt.
+                exc.partial_tests = current_tests
+                exc.partial_result = current_result
+                raise
             candidate_result = self._runner.run(candidate_tests)
 
             # A "fix" that increases failed+errors is a regression (e.g.

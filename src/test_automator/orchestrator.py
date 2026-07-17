@@ -552,17 +552,31 @@ class LocalTestPipeline:
                         total,
                     )
         except LLMSessionLimitError as exc:
-            passed_files = [t.test_file_path for t in tests]
+            # The limit was hit mid-fix. Recover the best-so-far test the
+            # fixer attached to the exception (e.g. a 30/33-passing file)
+            # and write it to disk for review — otherwise all the work
+            # this run already paid for is lost, and with an empty tests
+            # list the run would misleadingly report PASS with 0 tests.
+            # It is NOT manifest-stamped (it isn't fully passing), so the
+            # next run re-attempts it rather than treating it as done.
+            for gen in getattr(exc, "partial_tests", None) or []:
+                if all(gen.test_file_path != t.test_file_path for t in tests):
+                    self._persist(gen)
+                    tests.append(gen)
+                    if last_result is None:
+                        last_result = getattr(exc, "partial_result", None)
+            saved_files = [t.test_file_path for t in tests]
             usage = getattr(self._llm, "usage_summary", None)
             logger.warning(
                 "ABORTING run — LLM session/usage limit reached (%s). "
-                "%d file(s) already generated; passing ones are saved "
-                "to disk. %s",
+                "%d file(s) recovered; best-so-far tests saved to disk "
+                "for review (not committed — they are not fully passing). "
+                "%s",
                 usage() if callable(usage) else "usage unknown",
                 len(tests),
                 exc,
             )
-            logger.warning("Files produced before abort: %s", passed_files)
+            logger.warning("Files saved before abort: %s", saved_files)
 
         return tests, (last_result if len(tests) == 1 else None)
 

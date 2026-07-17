@@ -60,4 +60,19 @@ class LLMSessionLimitError(LLMBridgeError):
     the whole run immediately — every further call would fail the same
     way — instead of burning attempts on doomed calls, while keeping
     the tests already generated and passing.
+
+    ``partial_tests``/``partial_result`` carry the best-so-far state of
+    an in-progress fix loop when the limit is hit mid-fix, so the
+    orchestrator can persist that work (e.g. a 30/33-passing file)
+    instead of discarding everything the aborted run already paid for.
     """
+
+    def __init__(
+        self,
+        message: str,
+        partial_tests: list | None = None,
+        partial_result: object | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.partial_tests = partial_tests or []
+        self.partial_result = partial_result
