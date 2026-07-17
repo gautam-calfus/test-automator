@@ -39,25 +39,24 @@ cd test-automator
 pip install -e .
 ```
 
-Or install a tagged release directly (pin your whole team to the same version):
+Or install the tagged release directly:
 ```bash
-pip install "git+https://github.com/gautam-calfus/test-automator.git@v0.4.0"
+pip install "git+https://github.com/gautam-calfus/test-automator.git@v0.1"
 ```
 
-> **Upgrading?** `pip` won't replace an already-installed copy unless you force it —
-> so an old checkout keeps running old code. To pull a new release into an
-> existing environment:
+> **Already have it installed? You MUST force-reinstall to get updates.**
+> `v0.1` is a moving tag, and `pip` will keep whatever copy is already in
+> your environment unless you force it — so an old checkout silently keeps
+> running old code. Always upgrade with:
 > ```bash
 > pip install --upgrade --force-reinstall --no-cache-dir \
->   "git+https://github.com/gautam-calfus/test-automator.git@v0.4.0"
+>   "git+https://github.com/gautam-calfus/test-automator.git@v0.1"
 > ```
-> For the bleeding edge instead of a pinned release, use `@main`.
-
-Verify you're on the expected version:
-```bash
-test-automator --help
-pip show test-automator | grep -i version   # should print 0.4.0
-```
+> Confirm the fix is present (rather than the version string, which stays
+> `0.1`):
+> ```bash
+> python -c "import test_automator.utils.manifest; print('idempotency manifest: OK')"
+> ```
 
 ## Quick start
 
