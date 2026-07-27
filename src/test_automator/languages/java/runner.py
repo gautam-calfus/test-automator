@@ -417,9 +417,16 @@ def collection_error_markers() -> tuple[str, ...]:
         # Gradle dependency resolution
         "Could not resolve all files for configuration",
         "Could not find or load main class",
-        # JVM / daemon issues (shared with Kotlin)
-        "Could not create service of type FileAccessTimeJournal",
-        "Timeout waiting to lock journal cache",
+        # JVM / daemon issues (shared with Kotlin). A stuck/foreign Gradle
+        # daemon holding any cache lock aborts the build before a single
+        # test runs. Match the lock symptoms lock-AGNOSTICALLY: Gradle
+        # locks several caches (journal, file-hash, artifact-transforms…)
+        # and names a different service each time ("FileAccessTimeJournal",
+        # "FileHasher", …), so pinning specific service names misses most
+        # of them. These two substrings appear in every Gradle lock error.
+        "Timeout waiting to lock",
+        "is currently in use by another Gradle instance",
+        "Could not create service of type",
         "Could not start your build",
         # JDK/Gradle version mismatch — e.g. Gradle 6.x run under JDK 17
         # ("major version 61"). Nothing test-related ever runs; the fix

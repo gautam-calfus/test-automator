@@ -342,9 +342,14 @@ def collection_error_markers() -> tuple[str, ...]:
         # can't fix by rewriting test code
         "Could not resolve all files for configuration",
         "Could not find or load main class",
-        # Build infrastructure issues
-        "Could not create service of type FileAccessTimeJournal",
-        "Timeout waiting to lock journal cache",
+        # Build infrastructure issues. A stuck/foreign Gradle daemon
+        # holding any cache lock (journal, file-hash, artifact-transforms…)
+        # aborts the build before a single test runs, and Gradle names a
+        # different service each time. Match the lock symptoms
+        # lock-AGNOSTICALLY so we catch every variant, not just the journal.
+        "Timeout waiting to lock",
+        "is currently in use by another Gradle instance",
+        "Could not create service of type",
         # Gradle init failures
         "Could not start your build",
         # JDK/Gradle version mismatch — e.g. Gradle 6.x run under JDK 17

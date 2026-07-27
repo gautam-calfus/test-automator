@@ -260,6 +260,58 @@ def test_gradle_daemon_lock_is_indeterminate_not_a_compile_failure(tmp_path):
     assert ok is None  # indeterminate, not False
 
 
+def test_gradle_file_hash_lock_is_indeterminate(tmp_path):
+    """Regression: a *different* Gradle cache lock than the journal one —
+    the file-hash cache lock ("Could not create service of type FileHasher
+    ... Timeout waiting to lock file hash cache") — must also be treated as
+    an environment error. Pinning the service name to FileAccessTimeJournal
+    missed this, so the fix loop spent LLM calls 'fixing' a build that
+    never ran a single test."""
+    import subprocess
+    from test_automator.languages.java import runner as java_runner
+
+    (tmp_path / "pom.xml").write_text("<project/>")
+    (tmp_path / "mvnw").write_text("#!/bin/sh\n")
+
+    lock_output = (
+        "FAILURE: Build failed with an exception.\n"
+        "* What went wrong:\nGradle could not start your build.\n"
+        "> Could not create service of type FileHasher using "
+        "GradleUserHomeServices.createCachingFileHasher().\n"
+        "   > Timeout waiting to lock file hash cache "
+        "(/Users/x/.gradle/caches/6.3/fileHashes). It is currently in use "
+        "by another Gradle instance.\n     Owner PID: 47794\n"
+    )
+
+    class _P:
+        returncode = 1
+        stdout = lock_output
+        stderr = ""
+
+    orig = subprocess.run
+    subprocess.run = lambda *a, **k: _P()
+    try:
+        ok, _out = java_runner.check_tests_compile(str(tmp_path))
+    finally:
+        subprocess.run = orig
+    assert ok is None  # indeterminate, not False
+
+
+def test_gradle_file_hash_lock_marker_bails_fix_loop():
+    """The same file-hash lock must be recognized by
+    collection_error_markers so the failure_fixer bails instead of
+    calling the LLM — this is what wasted 3 LLM calls in the real run."""
+    from test_automator.languages.java import runner as java_runner
+
+    lock_output = (
+        "Could not create service of type FileHasher ...\n"
+        "Timeout waiting to lock file hash cache ... It is currently in "
+        "use by another Gradle instance. Owner PID: 47794\n"
+    )
+    markers = java_runner.collection_error_markers()
+    assert any(m in lock_output for m in markers)
+
+
 def test_real_compile_error_is_still_false(tmp_path):
     import subprocess
     from test_automator.languages.java import runner as java_runner
