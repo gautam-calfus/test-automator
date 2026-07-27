@@ -118,7 +118,19 @@ def check_tests_compile(
     except (subprocess.TimeoutExpired, OSError):
         return None, ""
     out = proc.stdout + proc.stderr
-    return (proc.returncode == 0), out
+    if proc.returncode == 0:
+        return True, out
+    # A nonzero exit isn't necessarily a compile failure. An environment
+    # problem (Gradle daemon/journal lock, dependency resolution, JDK/
+    # Gradle mismatch) means the build never reached compilation —
+    # treating it as "tests don't compile" causes a misleading abort.
+    # Env error → indeterminate (skip the gate); real compile error →
+    # False; otherwise indeterminate rather than a false block.
+    if any(m in out for m in collection_error_markers()):
+        return None, out
+    if _is_compile_error(out) or "e: " in out:
+        return False, out
+    return None, out
 
 
 def _fqn_for_test_file(test_file_path: str) -> str:

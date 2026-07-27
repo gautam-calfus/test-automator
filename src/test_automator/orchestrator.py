@@ -290,6 +290,22 @@ class LocalTestPipeline:
                 ok, output = check(self._config.repo_path, timeout)
             except Exception:
                 continue
+            if ok is None and output and output.strip():
+                # Build couldn't be run to a verdict — almost always an
+                # environment problem (Gradle daemon/journal lock, dep
+                # resolution, JDK/Gradle mismatch), NOT a broken suite.
+                # Proceed, but tell the user how to clear the common one.
+                logger.warning(
+                    "pre-flight: could not verify the %s test suite "
+                    "compiles — the build didn't run to completion "
+                    "(likely a Gradle daemon/journal lock or other "
+                    "environment issue, NOT a compile failure). "
+                    "Proceeding. If generation then hits the same error, "
+                    "clear it: `./gradlew --stop` and remove "
+                    "~/.gradle/caches/journal-*/journal-*.lock, then "
+                    "re-run.",
+                    handler.name,
+                )
             if ok is False:
                 if getattr(self._config, "repair_existing", False):
                     ok, output = self._repair_existing_tests(

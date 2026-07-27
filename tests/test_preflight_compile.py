@@ -223,3 +223,59 @@ def test_broken_unrelated_file_still_aborts(tmp_path, monkeypatch):
         will_regenerate={"src/test/java/com/x/CMServiceTest.java"},
     )
     assert msg is not None  # OtherTest is unrelated → abort
+
+
+def test_gradle_daemon_lock_is_indeterminate_not_a_compile_failure(tmp_path):
+    """A Gradle journal/daemon lock (build never started) must NOT be
+    reported as 'tests don't compile' — it's an environment error, so
+    check_tests_compile returns None (indeterminate) and the pre-flight
+    doesn't falsely abort."""
+    import subprocess
+    from test_automator.languages.java import runner as java_runner
+
+    # a pom so detect_build_tool succeeds
+    (tmp_path / "pom.xml").write_text("<project/>")
+    (tmp_path / "mvnw").write_text("#!/bin/sh\n")
+
+    lock_output = (
+        "FAILURE: Build failed with an exception.\n"
+        "> Could not create service of type FileAccessTimeJournal ...\n"
+        "  > Timeout waiting to lock journal cache "
+        "(/Users/x/.gradle/caches/journal-1). It is currently in use by "
+        "another Gradle instance.\nBUILD FAILED\n"
+    )
+
+    class _P:
+        returncode = 1
+        stdout = lock_output
+        stderr = ""
+
+    monkeypatch_run = lambda *a, **k: _P()  # noqa: E731
+    orig = subprocess.run
+    subprocess.run = monkeypatch_run
+    try:
+        ok, _out = java_runner.check_tests_compile(str(tmp_path))
+    finally:
+        subprocess.run = orig
+    assert ok is None  # indeterminate, not False
+
+
+def test_real_compile_error_is_still_false(tmp_path):
+    import subprocess
+    from test_automator.languages.java import runner as java_runner
+
+    (tmp_path / "pom.xml").write_text("<project/>")
+    (tmp_path / "mvnw").write_text("#!/bin/sh\n")
+
+    class _P:
+        returncode = 1
+        stdout = "CMServiceTest.java:76: error: cannot find symbol\n"
+        stderr = ""
+
+    orig = subprocess.run
+    subprocess.run = lambda *a, **k: _P()
+    try:
+        ok, _out = java_runner.check_tests_compile(str(tmp_path))
+    finally:
+        subprocess.run = orig
+    assert ok is False  # genuine compile error → blocks
