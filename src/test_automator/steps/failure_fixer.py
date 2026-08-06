@@ -197,8 +197,27 @@ class FailureFixer:
         # wasting every retry as a no-op re-run. So for a single file,
         # any non-passing result means "fix it".
         single_file = len(tests) == 1
+        # Brace-language test sources (Java/Kotlin) all compile together:
+        # ONE sibling test file that doesn't compile makes the WHOLE suite
+        # report errors, so every file under test looks broken even when
+        # it's perfect. If the compiler told us WHICH files the errors are
+        # in, and none of them is the file under test, this file is not the
+        # culprit — don't spend an LLM call "fixing" correct code. (When we
+        # can't localize the errors, fall back to the old behavior.)
+        error_files = self._compile_error_files(result.output)
         result_tests: list[GeneratedTest] = []
         for gen in tests:
+            if error_files and not self._path_in_error_set(gen, error_files):
+                logger.warning(
+                    "%s compiles fine — NOT fixing it. The run reports "
+                    "errors because a sibling test file doesn't compile "
+                    "(shared test compilation): %s. Fix or remove that "
+                    "file; this one is left as generated.",
+                    gen.test_file_path,
+                    ", ".join(sorted(error_files)),
+                )
+                result_tests.append(gen)
+                continue
             attributed = self._has_failures(gen, result) or (
                 single_file and (result.failed + result.errors) > 0
             )
@@ -220,6 +239,48 @@ class FailureFixer:
                 # wrote it to disk; the user can inspect and patch.
                 result_tests.append(gen)
         return result_tests
+
+    # Compiler diagnostics that carry a file location, e.g.
+    #   /abs/path/FooTest.java:50: error: reference to set is ambiguous
+    #   src/test/kotlin/FooTest.kt:12:5: error: unresolved reference
+    _COMPILE_ERROR_LINE = re.compile(
+        r"(?P<path>[^\s:]+\.(?:java|kt)):\d+(?::\d+)?:\s*error:",
+    )
+
+    @classmethod
+    def _compile_error_files(cls, output: str) -> set[str]:
+        """The set of source files the compiler reported errors in.
+
+        Empty when the output carries no locatable compile diagnostics —
+        e.g. a pure runtime/assertion failure, or a build tool whose error
+        format we don't recognize — in which case the caller falls back to
+        its normal attribution and nothing changes.
+        """
+        return {
+            m.group("path") for m in cls._COMPILE_ERROR_LINE.finditer(output)
+        }
+
+    @staticmethod
+    def _path_in_error_set(gen: GeneratedTest, error_files: set[str]) -> bool:
+        """True if this generated test file is among the files the compiler
+        errored on. The compiler prints absolute paths while
+        ``gen.test_file_path`` is usually repo-relative, so match on a
+        common path suffix rather than exact equality."""
+        gen_parts = gen.test_file_path.replace("\\", "/").split("/")
+        for err in error_files:
+            err_parts = err.replace("\\", "/").split("/")
+            if gen_parts[-1] != err_parts[-1]:
+                continue
+            # Same basename — confirm with the longest shared suffix so a
+            # file that merely shares a name in another package doesn't
+            # match. One shared path segment beyond the basename is enough
+            # for the flat cases; identical basename alone also suffices
+            # when either path is just a filename.
+            n = min(len(gen_parts), len(err_parts))
+            if all(gen_parts[-k] == err_parts[-k] for k in range(1, n + 1)) \
+                    or n == 1:
+                return True
+        return False
 
     @staticmethod
     def _has_failures(gen: GeneratedTest, result: TestRunResult) -> bool:

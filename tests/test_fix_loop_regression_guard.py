@@ -243,3 +243,71 @@ def test_introducing_a_collection_error_is_rolled_back() -> None:
     assert final_tests[0].content == "// runs, 3 fail"
     assert final_result.failed == 3
     assert final_result.errors == 0
+
+
+# ---------------------------------------------------------------------------
+# Sibling compile-error poisoning (Java/Kotlin shared test compilation)
+# ---------------------------------------------------------------------------
+
+
+def _java_gen(name: str) -> GeneratedTest:
+    return GeneratedTest(
+        source_file_path=f"src/main/java/com/acme/{name}.java",
+        test_file_path=f"src/test/java/com/acme/{name}Test.java",
+        content="// v1",
+        covered_functions=["doThing"],
+    )
+
+
+def test_compile_error_in_sibling_does_not_trigger_llm_fix() -> None:
+    """A single broken sibling test file makes the whole Java suite report
+    errors, so a perfectly good file under test looks broken. The fixer
+    must NOT spend an LLM call on the good file — it should recognize the
+    compile errors are located in a different file and leave this one
+    alone."""
+
+    class _NeverCalledLLM:
+        def generate(self, system_prompt: str, user_prompt: str) -> str:
+            raise AssertionError("LLM must not be called for a file whose "
+                                 "code is not where the compile errors are")
+
+    fixer = FailureFixer(_config(), runner=None, llm=_NeverCalledLLM())
+    good = _java_gen("AdminService")
+    compile_out = (
+        "/abs/src/test/java/com/acme/CmAlertScheduleDaoImplTest.java:50: "
+        "error: reference to set is ambiguous\n"
+        "/abs/src/test/java/com/acme/CmAlertScheduleDaoImplTest.java:181: "
+        "error: no suitable method found for thenReturn(SelectFromStep)\n"
+    )
+    result = TestRunResult(
+        passed=0, failed=0, errors=1, total=1,
+        output=compile_out, failed_test_ids=[], is_passing=False,
+    )
+
+    out = fixer._fix_round([good], result)
+    # File left exactly as generated; no fix attempted.
+    assert out == [good]
+
+
+def test_compile_error_in_own_file_still_fixed() -> None:
+    """Control: when the compile error IS in the file under test, the
+    fixer still tries to fix it."""
+    calls = {"n": 0}
+
+    class _LLM:
+        def generate(self, system_prompt: str, user_prompt: str) -> str:
+            calls["n"] += 1
+            return "```java\npackage com.acme;\nclass AdminServiceTest {}\n```"
+
+    fixer = FailureFixer(_config(), runner=None, llm=_LLM())
+    good = _java_gen("AdminService")
+    compile_out = (
+        "/abs/src/test/java/com/acme/AdminServiceTest.java:12: "
+        "error: cannot find symbol\n"
+    )
+    result = TestRunResult(
+        passed=0, failed=0, errors=1, total=1,
+        output=compile_out, failed_test_ids=[], is_passing=False,
+    )
+    fixer._fix_round([good], result)
+    assert calls["n"] == 1
