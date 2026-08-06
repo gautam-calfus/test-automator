@@ -105,11 +105,36 @@ def _find_top_level_closing_brace(text: str) -> int:
     - Character literals
     - Line comments (``//``)
     - Block comments (``/* ... */``)
+    - Braces inside type-level annotations, e.g.
+      ``@SuppressWarnings({"unchecked", "rawtypes"})`` or
+      ``@TestPropertySource(properties = {...})``. These ``{ }`` sit
+      BEFORE the class body opens; counting them made the walk hit
+      depth 0 at the annotation's ``}`` and truncate the whole file
+      right there. So we don't start counting braces until we've passed
+      the ``class``/``interface``/``enum``/``record`` declaration keyword
+      — the annotation braces come before it and are ignored.
     """
     depth = 0
     i = 0
     n = len(text)
     first_brace_seen = False
+    # Only braces at or after the type declaration count toward the
+    # class body. Everything before (package, imports, annotations with
+    # array values) is ignored.
+    seen_type_keyword = False
+    _TYPE_KEYWORDS = ("class", "interface", "enum", "record")
+
+    def _at_type_keyword(pos: int) -> bool:
+        for kw in _TYPE_KEYWORDS:
+            end = pos + len(kw)
+            if text[pos:end] == kw:
+                before = text[pos - 1] if pos > 0 else " "
+                after = text[end] if end < n else " "
+                if not (before.isalnum() or before in "_$") and not (
+                    after.isalnum() or after in "_$"
+                ):
+                    return True
+        return False
 
     while i < n:
         c = text[i]
@@ -163,13 +188,19 @@ def _find_top_level_closing_brace(text: str) -> int:
             i += 1
             continue
 
-        if c == "{":
-            depth += 1
-            first_brace_seen = True
-        elif c == "}":
-            depth -= 1
-            if first_brace_seen and depth == 0:
-                return i
+        # Track the type declaration so annotation array-braces that
+        # appear before it don't get counted as the class body.
+        if not seen_type_keyword and _at_type_keyword(i):
+            seen_type_keyword = True
+
+        if seen_type_keyword:
+            if c == "{":
+                depth += 1
+                first_brace_seen = True
+            elif c == "}":
+                depth -= 1
+                if first_brace_seen and depth == 0:
+                    return i
 
         i += 1
 

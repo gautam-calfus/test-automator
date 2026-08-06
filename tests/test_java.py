@@ -214,6 +214,37 @@ def test_extractor_raises_when_no_package() -> None:
         extractor.extract_java_file(response)
 
 
+def test_extractor_not_truncated_by_annotation_array_braces() -> None:
+    """Regression: a class-level annotation whose value contains an array
+    literal — @SuppressWarnings({"unchecked", "rawtypes"}) or
+    @TestPropertySource(properties = {...}) — puts ``{ }`` BEFORE the class
+    body. The brace-counter used to hit depth 0 at the annotation's ``}``
+    and truncate the whole file there (dropping the class body and even the
+    annotation's closing ``)``), producing 'reached end of file while
+    parsing'. The class keyword now gates brace counting."""
+    response = """```java
+package com.vizerto.service.daos;
+
+import org.junit.jupiter.api.Test;
+
+@SuppressWarnings({"unchecked", "rawtypes"})
+@TestPropertySource(properties = {"a=1", "b=2"})
+class CmAlertScheduleDaoImplTest {
+    @Test
+    void works() {
+        assert true;
+    }
+}
+```"""
+    result = extractor.extract_java_file(response)
+    assert "class CmAlertScheduleDaoImplTest" in result
+    assert "@SuppressWarnings({\"unchecked\", \"rawtypes\"})" in result
+    assert "void works()" in result
+    # The real class-body closing brace is captured (file is complete).
+    assert result.rstrip().endswith("}")
+    assert result.count("{") == result.count("}")
+
+
 def test_extractor_tests_block_finds_at_least_one_test() -> None:
     """Incremental mode extracts ``@Test`` methods from the response."""
     response = """```java
