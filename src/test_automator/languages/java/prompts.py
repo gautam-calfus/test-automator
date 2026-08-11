@@ -37,6 +37,34 @@ SYSTEM_PROMPT_FRESH = """\
 You are an expert Java test engineer at Acme. Generate a JUnit 5 test
 class for the source class that was changed in this PR.
 
+== READ THE SOURCE BEFORE YOU WRITE (highest priority) ==
+
+You have Read, Grep, and Glob tools and the repository is your working
+directory. USE THEM. The prompt below is a summary, not the truth —
+large method bodies are omitted from it, and that is exactly where
+tests go wrong.
+
+Before writing a single test, for each method under test:
+
+1. **Read the actual method body** in the source file. The prompt gives
+   you the path and line numbers.
+2. **If the changed method is private or package-private, find its
+   caller(s)** (``Grep`` for the method name) and read the public entry
+   point you will actually invoke from the test. Note EVERY condition
+   between the entry point and the code you are testing: null guards,
+   ``isEmpty`` checks, role checks, early ``return``s, validation
+   helpers that bail out. Your test must satisfy all of them or the
+   code under test never executes and your ``verify()`` fails with
+   "Wanted but not invoked … there were zero interactions".
+3. **Read the collaborators you intend to stub** — DAO/service
+   interfaces, DTOs, enums — to confirm method names, parameter types,
+   return types, and real enum constants. Never guess a signature.
+4. **Check what the path actually calls.** Stub only those
+   collaborators (see the strict-stubbing rule below).
+
+Reading three files costs a few seconds and is the difference between
+a test that passes and one that needs three fix rounds. Do not skip it.
+
 == Test framework ==
 
 - JUnit 5 (``org.junit.jupiter.api.Test``, ``@BeforeEach``)
@@ -108,10 +136,21 @@ class for the source class that was changed in this PR.
   constants like ``DEPROVISION``. String-vs-enum mismatches will cause
   ``ClassCastException`` at runtime.
 
-- Prefer ``lenient()`` mocks when stubbing setup calls that some tests
-  might not exercise: ``lenient().when(command.getSourceIdp()).thenReturn(SourceIdp.OKTA)``.
-  This avoids ``UnnecessaryStubbingException`` when the mock is used
-  in a ``@BeforeEach`` but individual tests don't touch every stub.
+- **Mockito STRICT stubbing is on** (``MockitoExtension`` defaults to
+  ``Strictness.STRICT_STUBS``). Every ``when(...)`` you write MUST be
+  called by the code path that test exercises, or the test fails with
+  ``UnnecessaryStubbingException`` — even though the assertion itself
+  passed. Two rules:
+
+  - A test that asserts a guard SKIPS the work (e.g. "does nothing when
+    the DTO is null") must NOT stub the collaborators inside the
+    skipped branch. Stub only what runs BEFORE the guard.
+  - For shared ``@BeforeEach`` setup that not every test needs, use
+    ``lenient()``:
+    ``lenient().when(command.getSourceIdp()).thenReturn(SourceIdp.OKTA)``.
+
+  When in doubt, re-read the method body and stub exactly the calls on
+  the path — not the ones you assume are there.
 
 - Mock all collaborators (other services, DAOs). Don't use ``@SpringBootTest``;
   these are unit tests, not integration tests.
@@ -168,11 +207,34 @@ test file exists for the source class. Generate ONLY new ``@Test`` method
 declarations to add to that file — covering the changes shown in the
 PR diff.
 
+== READ THE SOURCE BEFORE YOU WRITE (highest priority) ==
+
+You have Read, Grep, and Glob tools and the repository is your working
+directory. USE THEM — the prompt is a summary and omits large method
+bodies.
+
+For each method under test: read its real body; if it is private, Grep
+for its caller and read the public entry point you will invoke, noting
+EVERY guard between them (null checks, ``isEmpty``, role checks,
+validation helpers that return early). A test that doesn't satisfy
+those guards fails with "Wanted but not invoked … zero interactions".
+Read the collaborators you stub to confirm real signatures and enum
+constants.
+
+Also read the EXISTING test file's ``@BeforeEach`` and ``@Mock`` fields
+so your new tests reuse them correctly instead of re-stubbing or
+contradicting them.
+
 == Test framework ==
 
 Same as fresh-generation: JUnit 5 + Mockito + standard JUnit assertions.
 Match the style of the existing test file shown in the user prompt
 (field declarations, ``@BeforeEach`` setup, mock initialization).
+
+**Mockito strict stubbing is on**: every ``when(...)`` in a new test
+must actually be called on that test's path, or it fails with
+``UnnecessaryStubbingException``. For a test asserting that a guard
+skips work, do not stub the collaborators inside the skipped branch.
 
 == What to output ==
 
@@ -230,19 +292,42 @@ previously generated has FAILED when run with Maven/Gradle. Fix the
 test so it passes — without modifying the source code being tested.
 
 The user prompt will show you:
-- The source file under test
+- The source file under test (possibly abbreviated — READ IT ON DISK)
 - The failing test file (the one you previously generated)
 - Maven/Gradle's output (compile error, assertion failure, or
   unexpected exception)
 
+== DIAGNOSE FROM THE SOURCE, DON'T GUESS (highest priority) ==
+
+You have Read, Grep, and Glob tools and the repository is your working
+directory. A blind guess at a fix usually fails again and wastes a
+whole run. For EVERY failure:
+
+1. Read the real source of the method under test on disk (the prompt's
+   copy may be truncated to signatures for large files).
+2. Trace the exact path the failing test takes, from the method the
+   test calls down to the assertion or ``verify()`` that failed.
+3. Fix the TEST to match what the code actually does.
+
+Specifically for "**Wanted but not invoked … there were zero
+interactions with this mock**": the code under test never reached that
+call. Do NOT just delete the verification — find the guard that
+stopped execution (a null check, an ``isEmpty``, a role/permission
+check, a validation helper that returned early, an exception swallowed
+by a ``catch``) and make the test satisfy it: stub the DAO/service the
+guard consults so it returns the value that lets execution continue.
+If the changed method is private, the test drives it through a public
+entry point — read that whole entry point and satisfy every gate on
+the way in.
+
 == Common failure modes ==
 
 1. **Unresolved reference**: you used a method or field that doesn't
-   exist on the source class. Look at the CLASS SIGNATURES — use only
-   methods/fields shown there.
+   exist on the source class. Read the class on disk and use only what
+   it really declares.
 
-2. **Type mismatch**: read the parameter types in CLASS SIGNATURES and
-   match them. ``UUID`` is not ``String``; ``int`` is not ``Integer``.
+2. **Type mismatch**: read the real parameter types in the source.
+   ``UUID`` is not ``String``; ``int`` is not ``Integer``.
 
 3. **Missing import**: add it. Common ones at Acme:
    - ``import org.junit.jupiter.api.Test;``
@@ -254,8 +339,12 @@ The user prompt will show you:
    - ``import static org.mockito.Mockito.*;``
    - ``import static org.junit.jupiter.api.Assertions.*;``
 
-4. **Mockito error: ``UnnecessaryStubbingException``**: you stubbed a mock
-   method that wasn't called. Remove the unused stub.
+4. **Mockito error: ``UnnecessaryStubbingException``**: strict stubbing
+   is on and a ``when(...)`` in that test was never called. The message
+   names the exact lines. Either remove those stubs (correct when the
+   test asserts that a guard SKIPS the work — the skipped branch's
+   collaborators are never touched) or mark shared setup stubs
+   ``lenient()``. Read the method body to decide which.
 
 5. **Mockito error: ``WrongTypeOfReturnValue``**: ``when().thenReturn()``
    types don't match. Check the DAO method's return type.
@@ -565,9 +654,11 @@ def _read_source_capped(source_file_path: str) -> str:
         compact = extract_class_signatures(raw, compact=True)
         prefix = (
             f"// NOTE: full source is {len(raw)} chars — showing compact\n"
-            f"// class signatures only (method bodies omitted). If you\n"
-            f"// need to see a specific method body, reference it by name\n"
-            f"// from the test code and runner output.\n\n"
+            f"// class signatures only (ALL method bodies omitted).\n"
+            f"// >>> READ THE FILE ON DISK to see any method body you\n"
+            f"//     need: {source_file_path}\n"
+            f"//     Do that before changing a failing verify() — the\n"
+            f"//     reason a call wasn't invoked is in the body.\n\n"
         )
         return prefix + compact
     except Exception:
@@ -601,13 +692,24 @@ def _render_functions_for_prompt(affected: list[AffectedFunction]) -> str:
         # the signature — Claude has the diff in WHAT CHANGED
         if len(body) > 2000 and fn.diff_hunk and len(fn.diff_hunk) < len(body) // 2:
             sig = _extract_method_signature(body)
+            # Point at the exact location instead of leaving a hole. The
+            # omitted body is where guards and early returns live — the
+            # things a test must satisfy — so tell the model to go read
+            # it rather than infer it from the diff hunk alone.
             sections.append(
                 f"// {fn.kind}: {fn.qualified_name} "
-                f"(body omitted — {len(body)} chars; see WHAT CHANGED above)\n"
+                f"(body omitted — {len(body)} chars)\n"
+                f"// >>> READ THE REAL BODY: {fn.file_path} "
+                f"lines {fn.line_start}-{fn.line_end}\n"
+                f"//     Note every guard/early-return on the path your "
+                f"test must take.\n"
                 f"{sig}"
             )
         else:
-            sections.append(f"// {fn.kind}: {fn.qualified_name}\n{body}")
+            sections.append(
+                f"// {fn.kind}: {fn.qualified_name} "
+                f"({fn.file_path}:{fn.line_start})\n{body}"
+            )
     return "\n\n".join(sections)
 
 

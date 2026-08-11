@@ -64,6 +64,8 @@ class LocalTestPipeline:
             timeout=config.claude_code_timeout,
             max_output_tokens=config.claude_code_max_output_tokens,
             effort=getattr(config, "claude_effort", "low"),
+            workdir=config.repo_path,
+            file_access=getattr(config, "llm_file_access", True),
         )
         self._reader = LocalDiffReader(config)
         self._analyzer = CodeAnalyzer(config)

@@ -121,8 +121,117 @@ class FailureFixer:
                 "tests still failing after fix attempts",
                 extra={"max": self._config.max_fix_retries},
             )
+            # Last resort: keep the tests that DO pass and drop the ones
+            # that don't. A human hitting the same wall ships the 34
+            # working tests and deletes the 3 they couldn't make pass —
+            # a green file with real coverage beats a red file that gets
+            # thrown away wholesale (which is what used to happen, so an
+            # entire run's LLM spend produced nothing usable).
+            current_tests, current_result = self._prune_failing_tests(
+                current_tests, current_result
+            )
 
         return current_tests, current_result
+
+    def _prune_failing_tests(
+        self,
+        tests: list[GeneratedTest],
+        result: TestRunResult,
+    ) -> tuple[list[GeneratedTest], TestRunResult]:
+        """Delete still-failing test methods, then re-run.
+
+        Only applies when the suite actually RAN (``errors == 0``): an
+        ``errors`` count means a compile/collection failure where no
+        individual test can be blamed, so there is nothing safe to
+        prune. Requires named failures and a handler that can parse and
+        remove test methods; anything missing means we return the input
+        untouched.
+
+        If pruning doesn't produce a green run, the original tests and
+        result are returned so the orchestrator's existing
+        "left for review" path behaves exactly as before.
+        """
+        if result.errors > 0 or not result.failed_test_ids:
+            return tests, result
+
+        # Failed ids look like ``pkg.ClassTest.methodName()`` (JUnit XML)
+        # or ``file::method`` (pytest); the trailing identifier is the
+        # method name either way.
+        failing_names = set()
+        for tid in result.failed_test_ids:
+            leaf = re.split(r"[.:]", tid.strip())[-1]
+            failing_names.add(leaf.removesuffix("()").strip())
+        if not failing_names:
+            return tests, result
+
+        pruned: list[GeneratedTest] = []
+        dropped_total: list[str] = []
+        for gen in tests:
+            handler = get_handler_for_file(gen.source_file_path)
+            parse = getattr(handler, "parse_existing_tests", None)
+            remove = getattr(handler, "remove_tests", None)
+            if handler is None or not callable(parse) or not callable(remove):
+                pruned.append(gen)
+                continue
+            try:
+                existing = parse(gen.content)
+                to_drop = [t for t in existing if t.name in failing_names]
+                if not to_drop:
+                    pruned.append(gen)
+                    continue
+                if len(to_drop) >= len(existing):
+                    # Every test in the file fails — nothing worth
+                    # keeping, so leave it for review rather than
+                    # shipping an empty test class.
+                    logger.warning(
+                        "all %d test(s) in %s are failing — not pruning",
+                        len(existing), gen.test_file_path,
+                    )
+                    pruned.append(gen)
+                    continue
+                remaining = remove(gen.content, to_drop)
+            except Exception as exc:
+                logger.warning(
+                    "could not prune failing tests from %s: %s",
+                    gen.test_file_path, exc,
+                )
+                pruned.append(gen)
+                continue
+
+            dropped_total.extend(t.name for t in to_drop)
+            pruned.append(
+                GeneratedTest(
+                    source_file_path=gen.source_file_path,
+                    test_file_path=gen.test_file_path,
+                    content=remaining,
+                    covered_functions=gen.covered_functions,
+                )
+            )
+
+        if not dropped_total:
+            return tests, result
+
+        logger.info(
+            "dropping %d test(s) that could not be made to pass, keeping "
+            "the rest: %s",
+            len(dropped_total), ", ".join(sorted(dropped_total)),
+        )
+        pruned_result = self._runner.run(pruned)
+        if pruned_result.is_passing:
+            logger.info(
+                "after pruning: %d test(s) passing — saving the file "
+                "(review the dropped test names above; those behaviors "
+                "are NOT covered)",
+                pruned_result.passed,
+            )
+            return pruned, pruned_result
+
+        logger.warning(
+            "pruning did not yield a green run (failed=%d errors=%d) — "
+            "keeping the unpruned tests for review",
+            pruned_result.failed, pruned_result.errors,
+        )
+        return tests, result
 
     # An ``errors`` count means a whole file/suite never ran (collection
     # or compile failure) — strictly worse than any number of individual

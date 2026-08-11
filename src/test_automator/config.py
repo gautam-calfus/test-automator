@@ -119,6 +119,12 @@ class LocalTestConfig:
     commit_only_if_passing: bool = True
     push: bool = False
     open_pr: bool = False
+    llm_file_access: bool = True
+    """Let the LLM read the repo (Read/Grep/Glob, no writing) while
+    generating and fixing tests, so it can verify signatures, enum
+    values, and control flow instead of guessing when the prompt omits
+    a large method body. Disable with --no-llm-file-access.
+    """
     llm_provider: str = "claude"
     """Which LLM CLI generates the tests: 'claude' (default),
     'copilot' (GitHub Copilot CLI), 'gemini' (Gemini CLI), or

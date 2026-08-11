@@ -126,9 +126,17 @@ class _CliBridge:
 
     provider = "generic"
 
-    def __init__(self, cmd: str, timeout: int = 180) -> None:
+    def __init__(
+        self,
+        cmd: str,
+        timeout: int = 180,
+        workdir: str | None = None,
+    ) -> None:
         self._cmd = cmd
         self._timeout = timeout
+        # Run the CLI inside the target repo so relative paths in prompts
+        # resolve and any file-reading tools see the project under test.
+        self._workdir = workdir
         # Running usage counters, surfaced in per-file progress logs so
         # the developer can see how fast a run is spending quota and
         # decide to stop (completed passing files are already on disk).
@@ -235,6 +243,7 @@ class _CliBridge:
                 timeout=self._timeout,
                 check=False,
                 env=self._env(),
+                cwd=self._workdir,
             )
         except subprocess.TimeoutExpired as exc:
             raise LLMBridgeError(
@@ -305,31 +314,71 @@ class ClaudeCodeBridge(_CliBridge):
 
     provider = "claude"
 
+    #: Tools the model may use when file access is enabled. Read/Grep/
+    #: Glob only — the model must NOT write anything (the pipeline owns
+    #: writing test files), so Write/Edit/Bash stay out.
+    READ_ONLY_TOOLS = ("Read", "Grep", "Glob")
+
     def __init__(
         self,
         cmd: str = "claude",
         timeout: int = 180,
         max_output_tokens: int = 16_000,
         effort: str = "low",
+        workdir: str | None = None,
+        file_access: bool = True,
     ) -> None:
         self._max_output_tokens = max_output_tokens
         self._effort = effort
-        super().__init__(cmd=cmd, timeout=timeout)
+        self._file_access = file_access
+        super().__init__(cmd=cmd, timeout=timeout, workdir=workdir)
 
     def _argv(self, system_prompt: str, user_prompt: str) -> list[str]:
         # JSON output (vs plain text) so we get accurate per-call token
         # counts and real USD cost alongside the response, surfaced in
         # the per-file usage readout. _parse_response unwraps it.
-        return [
+        argv = [
             self._cmd,
             "--print",
             "--output-format", "json",
             "--effort", self._effort,
-            "--tools", "",
+        ]
+
+        # Tool policy — the single biggest quality lever.
+        #
+        # Historically we passed ``--tools ""`` to force a one-shot
+        # text answer, on the theory that an agentic harness would try
+        # to write files itself. The cost of that was severe: the model
+        # could not look anything up, so it had to guess at any detail
+        # the prompt didn't spell out. Prompts omit large method bodies
+        # (they blow the context), which is exactly where the answers
+        # live — guard conditions, early returns, which collaborators a
+        # code path actually touches.
+        #
+        # Observed failure that motivated this: a generated test
+        # verified ``cmAlertScheduleDao.deactivateActive(...)`` on a
+        # private method reached only through a 150-line public entry
+        # point behind ``expiredQuestionAlertDTO != null && isUserACm``
+        # plus a validation gate. Mockito reported "zero interactions";
+        # three blind fix attempts could not converge because none of
+        # them could see the guard.
+        #
+        # With Read/Grep/Glob the model resolves that in one lookup.
+        # Writing stays disabled, so the pipeline remains the only
+        # thing that touches the working tree.
+        if self._file_access:
+            argv += ["--tools", *self.READ_ONLY_TOOLS]
+            if self._workdir:
+                argv += ["--add-dir", self._workdir]
+        else:
+            argv += ["--tools", ""]
+
+        argv += [
             "--system-prompt", system_prompt,
             "--permission-mode", "bypassPermissions",
             user_prompt,
         ]
+        return argv
 
     def _parse_response(self, stdout: str) -> tuple[str, dict | None]:
         """Unwrap Claude Code's JSON envelope into (response_text,
@@ -403,8 +452,13 @@ class CopilotCliBridge(_CliBridge):
 
     provider = "copilot"
 
-    def __init__(self, cmd: str = "copilot", timeout: int = 180) -> None:
-        super().__init__(cmd=cmd, timeout=timeout)
+    def __init__(
+        self,
+        cmd: str = "copilot",
+        timeout: int = 180,
+        workdir: str | None = None,
+    ) -> None:
+        super().__init__(cmd=cmd, timeout=timeout, workdir=workdir)
 
     def _argv(self, system_prompt: str, user_prompt: str) -> list[str]:
         return [
@@ -446,8 +500,13 @@ class GeminiCliBridge(_CliBridge):
 
     provider = "gemini"
 
-    def __init__(self, cmd: str = "gemini", timeout: int = 180) -> None:
-        super().__init__(cmd=cmd, timeout=timeout)
+    def __init__(
+        self,
+        cmd: str = "gemini",
+        timeout: int = 180,
+        workdir: str | None = None,
+    ) -> None:
+        super().__init__(cmd=cmd, timeout=timeout, workdir=workdir)
 
     def _argv(self, system_prompt: str, user_prompt: str) -> list[str]:
         return [
@@ -475,7 +534,12 @@ class GenericCliBridge(_CliBridge):
 
     provider = "custom"
 
-    def __init__(self, command_line: str, timeout: int = 180) -> None:
+    def __init__(
+        self,
+        command_line: str,
+        timeout: int = 180,
+        workdir: str | None = None,
+    ) -> None:
         argv = shlex.split(command_line)
         if not argv:
             raise LLMBridgeError(
@@ -483,7 +547,7 @@ class GenericCliBridge(_CliBridge):
                 '--llm-cmd "mycli --flag"'
             )
         self._argv_prefix = argv
-        super().__init__(cmd=argv[0], timeout=timeout)
+        super().__init__(cmd=argv[0], timeout=timeout, workdir=workdir)
 
     def _argv(self, system_prompt: str, user_prompt: str) -> list[str]:
         return self._argv_prefix + [
@@ -501,6 +565,8 @@ def create_bridge(
     timeout: int = 180,
     max_output_tokens: int = 16_000,
     effort: str = "low",
+    workdir: str | None = None,
+    file_access: bool = True,
 ) -> LLMBridge:
     """Build the right bridge for ``provider``.
 
@@ -512,6 +578,11 @@ def create_bridge(
         max_output_tokens: Claude-only response cap (ignored by others,
             which have no equivalent knob).
         effort: Claude-only reasoning-effort level (ignored by others).
+        workdir: repo root. The CLI runs here, and with file access on
+            it becomes the directory the model may read.
+        file_access: let the model read the repo (Read/Grep/Glob) to
+            verify signatures and control flow. Claude-only for now;
+            the other CLIs are invoked without tool permissions.
     """
     if provider == "claude":
         return ClaudeCodeBridge(
@@ -519,18 +590,26 @@ def create_bridge(
             timeout=timeout,
             max_output_tokens=max_output_tokens,
             effort=effort,
+            workdir=workdir,
+            file_access=file_access,
         )
     if provider == "copilot":
-        return CopilotCliBridge(cmd=cmd or "copilot", timeout=timeout)
+        return CopilotCliBridge(
+            cmd=cmd or "copilot", timeout=timeout, workdir=workdir
+        )
     if provider == "gemini":
-        return GeminiCliBridge(cmd=cmd or "gemini", timeout=timeout)
+        return GeminiCliBridge(
+            cmd=cmd or "gemini", timeout=timeout, workdir=workdir
+        )
     if provider == "custom":
         if not cmd:
             raise LLMBridgeError(
                 "--llm custom requires --llm-cmd with the command to run, "
-                'e.g. --llm custom --llm-cmd "mycli --flag"'
+                'e.g. --llm-cmd "mycli --flag"'
             )
-        return GenericCliBridge(command_line=cmd, timeout=timeout)
+        return GenericCliBridge(
+            command_line=cmd, timeout=timeout, workdir=workdir
+        )
     raise LLMBridgeError(
         f"Unknown LLM provider {provider!r} — expected one of "
         f"{', '.join(KNOWN_PROVIDERS)}"

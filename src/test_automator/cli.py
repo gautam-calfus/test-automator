@@ -201,6 +201,18 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument(
+        "--no-llm-file-access",
+        action="store_true",
+        help=(
+            "Forbid the LLM from reading your repo while writing tests. "
+            "By default it may Read/Grep/Glob (never write) so it can "
+            "check real signatures, enum values, and control flow "
+            "instead of guessing — which is what makes generated tests "
+            "compile and pass. Disabling this reverts to blind one-shot "
+            "generation."
+        ),
+    )
+    p.add_argument(
         "--llm-cmd",
         default=None,
         help=(
@@ -383,6 +395,7 @@ def main(argv: list[str] | None = None) -> int:
         open_pr=args.open_pr,
         llm_provider=args.llm,
         llm_cmd=args.llm_cmd,
+        llm_file_access=not args.no_llm_file_access,
         claude_code_cmd=args.claude_code_cmd,
         claude_effort=args.effort,
         claude_code_timeout=args.claude_code_timeout,
