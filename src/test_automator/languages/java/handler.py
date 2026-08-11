@@ -459,9 +459,14 @@ class JavaLanguageHandler:
         )
 
     def user_prompt_fix(
-        self, generated: GeneratedTest, runner_output: str
+        self,
+        generated: GeneratedTest,
+        runner_output: str,
+        failing_names: list[str] | None = None,
     ) -> str:
-        return prompts.user_prompt_fix(generated, runner_output)
+        return prompts.user_prompt_fix(
+            generated, runner_output, failing_names
+        )
 
     # --- LLM output extraction -------------------------------------------
 

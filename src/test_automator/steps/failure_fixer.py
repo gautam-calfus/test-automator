@@ -8,6 +8,7 @@ env issues).
 
 from __future__ import annotations
 
+import inspect
 import re
 
 from test_automator._logging import get_logger
@@ -23,6 +24,25 @@ from test_automator.utils.exceptions import (
 )
 
 logger = get_logger(__name__)
+
+
+def _accepts_failing_names(fn) -> bool:
+    """True if a handler's ``user_prompt_fix`` takes the third
+    ``failing_names`` argument. Handlers that predate it keep working.
+    """
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    if "failing_names" in params:
+        return True
+    # Positional-friendly fallback: (generated, runner_output, extra)
+    positional = [
+        p for p in params.values()
+        if p.kind
+        in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+    ]
+    return len(positional) >= 3
 
 # Hard cap on how much runner output is embedded in a fix prompt.
 # Jest/RTL failures include full DOM dumps: a 43-failure run produces
@@ -334,7 +354,9 @@ class FailureFixer:
                 result_tests.append(gen)
                 continue
             try:
-                fixed = self._fix_one(gen, result.output)
+                fixed = self._fix_one(
+                    gen, result.output, self._failing_names_for(gen, result)
+                )
                 result_tests.append(fixed)
             except FailureFixerError as exc:
                 logger.warning(
@@ -443,8 +465,31 @@ class FailureFixer:
                     return True
         return False
 
+    @staticmethod
+    def _failing_names_for(
+        gen: GeneratedTest, result: TestRunResult
+    ) -> list[str]:
+        """Test-method names in ``gen`` that actually failed.
+
+        Naming them in the fix prompt is what makes repair TARGETED.
+        Without it the model infers the culprits from raw runner output
+        and rewrites the whole file, which re-breaks tests that were
+        passing — observed as a fix loop crawling 5 → 4 → 3 failures,
+        one per round, until the retry budget ran out.
+        """
+        names: list[str] = []
+        for tid in result.failed_test_ids or []:
+            leaf = re.split(r"[.:]", tid.strip())[-1]
+            leaf = leaf.removesuffix("()").strip()
+            if leaf and leaf in gen.content and leaf not in names:
+                names.append(leaf)
+        return names
+
     def _fix_one(
-        self, gen: GeneratedTest, runner_output: str
+        self,
+        gen: GeneratedTest,
+        runner_output: str,
+        failing_names: list[str] | None = None,
     ) -> GeneratedTest:
         handler = get_handler_for_file(gen.source_file_path)
         if handler is None:
@@ -457,7 +502,16 @@ class FailureFixer:
 
         try:
             system_prompt = handler.system_prompt_fix()
-            user_prompt = handler.user_prompt_fix(gen, runner_output)
+            # Pass the failing names only to handlers that accept them,
+            # so language handlers not yet updated keep working.
+            if failing_names and _accepts_failing_names(
+                handler.user_prompt_fix
+            ):
+                user_prompt = handler.user_prompt_fix(
+                    gen, runner_output, failing_names
+                )
+            else:
+                user_prompt = handler.user_prompt_fix(gen, runner_output)
         except NotImplementedError as exc:
             raise FailureFixerError(
                 f"Fix-loop prompts for '{handler.name}' not implemented "

@@ -352,6 +352,13 @@ the way in.
 6. **NullPointerException in test**: a collaborator wasn't mocked or
    stubbed. Add ``@Mock`` for it and stub its methods.
 
+== PRESERVE THE PASSING TESTS ==
+
+Only the named failing tests are yours to change. Every other test in
+the file passes today; emit each one unchanged. A rewrite that "tidies"
+passing tests is how a fix loop goes backwards — it repairs one test
+and breaks another, so the failure count barely moves each round.
+
 == Output format — STRICT ==
 
 Output the COMPLETE fixed test file. Nothing else.
@@ -478,6 +485,12 @@ Test file:              {test_file_path}
 {runner_output}
 ```
 
+{failing_scope}
+Before you edit, READ the real source of each method the failing tests
+exercise (you have Read/Grep/Glob; the source above may be abbreviated).
+Find why the code behaved differently than the test expected, then fix
+the TEST to match reality.
+
 Rewrite the COMPLETE test file so the failures are fixed. Do NOT modify
 the source code — only the test code. Keep the test class name and
 package declaration the same. Output ONLY the fixed Java file, no
@@ -596,8 +609,18 @@ def _derive_test_class_name(source_path: str) -> str:
     return f"{stem}Test"
 
 
-def user_prompt_fix(generated: GeneratedTest, runner_output: str) -> str:
+def user_prompt_fix(
+    generated: GeneratedTest,
+    runner_output: str,
+    failing_names: list[str] | None = None,
+) -> str:
     """Build the user prompt for fix-loop attempts.
+
+    ``failing_names`` names the test methods that actually failed, so
+    the repair is TARGETED: change those, leave the rest untouched.
+    Without it the model re-derives the culprits from raw output and
+    rewrites everything, breaking tests that were already green (seen
+    as a fix loop inching 5 → 4 → 3 failures, one per round).
 
     v0.3.0a3 fix: Previously read the ENTIRE source file into the prompt.
     For CMService.java (6000+ lines, ~250K chars) this produced a
@@ -616,12 +639,33 @@ def user_prompt_fix(generated: GeneratedTest, runner_output: str) -> str:
     """
     source_code = _read_source_capped(generated.source_file_path)
 
+    if failing_names:
+        listed = "\n".join(f"  - {n}" for n in failing_names)
+        scope = (
+            f"== THE ONLY TESTS YOU MAY CHANGE ==\n\n"
+            f"These test methods failed:\n{listed}\n\n"
+            f"Fix exactly these. EVERY other test method in the file is "
+            f"currently PASSING — reproduce each one byte-for-byte in your "
+            f"output. Do not rename, reorder, 'improve', or delete a "
+            f"passing test. You may add a ``@Mock`` field or an import if "
+            f"a failing test needs it, but changing shared "
+            f"``@BeforeEach`` setup can break the passing tests, so only "
+            f"do it if you are certain (prefer ``lenient()`` there, and "
+            f"prefer per-test stubbing otherwise).\n"
+        )
+    else:
+        scope = (
+            "== SCOPE ==\n\nChange only what the failures require; keep "
+            "every currently-passing test exactly as it is.\n"
+        )
+
     return _USER_TEMPLATE_FIX.format(
         source_file=generated.source_file_path,
         test_file_path=generated.test_file_path,
         source_code=source_code,
         test_code=generated.content,
         runner_output=runner_output[:8000],  # cap to avoid blowing the prompt
+        failing_scope=scope,
     )
 
 
